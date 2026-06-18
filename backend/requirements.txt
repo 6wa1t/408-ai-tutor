@@ -1,0 +1,26 @@
+# === Backend Core ===
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.6
+alembic>=1.12.0
+
+# === PDF Parsing ===
+PyMuPDF>=1.23.0
+
+# === Retry & Resilience ===
+tenacity>=8.2.0
+
+# === LLM (DeepSeek API) ===
+openai>=1.0.0
+
+# === Frontend MVP ===
+streamlit>=1.28.0
+requests>=2.31.0
+
+# === Testing ===
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.25.0
