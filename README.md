@@ -37,7 +37,7 @@
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/qmgk-source/408-ai-tutor.git
+git clone https://github.com/6wa1t/408-ai-tutor.git
 cd 408-ai-tutor
 ```
 
