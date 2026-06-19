@@ -17,19 +17,19 @@ jobs:
       - name: Generate Release Notes
         id: notes
         run: |
-          echo "## 🚀 408考研AI专属助教 \${{ github.ref_name }}" > release_notes.md
+          echo "## 408考研AI专属助教 ${{ github.ref_name }}" > release_notes.md
           echo "" >> release_notes.md
           echo "### 变更内容" >> release_notes.md
           echo "" >> release_notes.md
-          PREV_TAG=\$(git tag --sort=-creatordate | head -2 | tail -1)
-          if [ "\$PREV_TAG" = "\${{ github.ref_name }}" ]; then
+          PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1)
+          if [ "$PREV_TAG" = "${{ github.ref_name }}" ]; then
             echo "- 初始发布" >> release_notes.md
           else
-            git log --oneline --no-decorate \$PREV_TAG..HEAD 2>/dev/null | sed 's/^/- /' >> release_notes.md || echo "- 初始发布" >> release_notes.md
+            git log --oneline --no-decorate $PREV_TAG..HEAD 2>/dev/null | sed 's/^/- /' >> release_notes.md || echo "- 初始发布" >> release_notes.md
           fi
           echo "" >> release_notes.md
           echo "---" >> release_notes.md
-          echo "*自动生成于 \$(date +'%Y-%m-%d %H:%M:%S')*" >> release_notes.md
+          echo "自动生成于 $(date +'%Y-%m-%d %H:%M:%S')" >> release_notes.md
           
       - name: Create Release
         uses: softprops/action-gh-release@v2
