@@ -211,6 +211,20 @@ else:
             st.markdown(f"**第 {i + 1} 题** | {q.get('subject', '')} · {q.get('chapter', '')} | ID: {q.get('id', '')}")
             st.markdown(q.get("question_text", ""))
 
+            # Display question images if available
+            image_path = q.get("image_path")
+            if image_path:
+                for img_rel in image_path.split(","):
+                    img_rel = img_rel.strip()
+                    if img_rel:
+                        try:
+                            st.image(
+                                f"{api_base}/images/{img_rel}",
+                                use_container_width=True,
+                            )
+                        except Exception:
+                            st.caption(f"[图片加载失败: {img_rel}]")
+
             # Display options
             opt_a = q.get("option_a") or ""
             opt_b = q.get("option_b") or ""

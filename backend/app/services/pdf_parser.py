@@ -46,6 +46,7 @@ class ParsedQuestion:
     section: str = ""           # e.g., "1.1 数据结构的基本概念"
     answer_ref: str = ""        # e.g., "答案见原书P6"
     exam_year: str = ""         # e.g., "2023统考真题"
+    page_number: int | None = None  # 0-indexed page in source PDF
 
 
 # ─────────────────────────────────────────────
@@ -184,8 +185,14 @@ class PyMuPDFStrategy:
     5. Store answer reference, section, exam year as metadata
     """
 
-    def parse(self, pdf_path: str) -> list[ParsedQuestion]:
-        """Parse a 题本 PDF file and return all questions."""
+    def parse(self, pdf_path: str, extract_images: bool = False) -> list[ParsedQuestion]:
+        """Parse a 题本 PDF file and return all questions.
+
+        Args:
+            pdf_path: Path to the PDF file.
+            extract_images: If True, also extract embedded images and attach
+                their file paths to the corresponding ParsedQuestion objects.
+        """
         pdf_path_obj = Path(pdf_path)
         if not pdf_path_obj.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -195,18 +202,40 @@ class PyMuPDFStrategy:
         subject = infer_subject(pdf_path)
 
         try:
-            # Step 1: Extract and clean text per page
+            # Step 1: Extract and clean text per page, build offset map
             pages_text: list[str] = []
-            for page in doc:
+            page_offsets: list[tuple[int, int, int]] = []  # (start, end, page_idx)
+            offset = 0
+            for page_idx, page in enumerate(doc):
                 text = page.get_text("text")
                 text = clean_page_text(text)
                 pages_text.append(text)
+                end = offset + len(text)
+                page_offsets.append((offset, end, page_idx))
+                offset = end + 1  # +1 for the \n joiner
 
             full_text = "\n".join(pages_text)
             logger.info(f"Extracted {len(full_text)} chars from {len(doc)} pages")
 
-            # Step 2: Parse into structured questions
-            questions = self._parse_full_text(full_text, subject)
+            # Step 2: Parse into structured questions with page tracking
+            questions = self._parse_full_text(full_text, subject, page_offsets)
+
+            # Step 3: PUA detection warning
+            from app.services.pua_detector import contains_pua
+            pua_count = sum(
+                1 for q in questions
+                if contains_pua(q.question_text) or any(contains_pua(v) for v in q.options.values())
+            )
+            if pua_count > 0:
+                logger.warning(
+                    f"PUA characters detected in {pua_count}/{len(questions)} questions. "
+                    f"Run scripts/repair_garbled_text.py to fix."
+                )
+
+            # Step 4: Extract embedded images if requested
+            if extract_images:
+                self._extract_and_attach_images(doc, questions, subject, pdf_path_obj.stem)
+
             logger.info(
                 f"Parsed {len(questions)} questions from {pdf_path_obj.name} "
                 f"(subject={subject})"
@@ -216,10 +245,26 @@ class PyMuPDFStrategy:
         finally:
             doc.close()
 
+    @staticmethod
+    def _find_page(char_offset: int, page_offsets: list[tuple[int, int, int]]) -> int:
+        """Binary search for the page that contains the given character offset."""
+        lo, hi = 0, len(page_offsets) - 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            start, end, _ = page_offsets[mid]
+            if char_offset < start:
+                hi = mid - 1
+            elif char_offset >= end:
+                lo = mid + 1
+            else:
+                return page_offsets[mid][2]
+        return page_offsets[-1][2] if page_offsets else 0
+
     def _parse_full_text(
         self,
         text: str,
         subject: str,
+        page_offsets: list[tuple[int, int, int]] | None = None,
     ) -> list[ParsedQuestion]:
         """Parse the full merged text into questions with section context."""
         questions: list[ParsedQuestion] = []
@@ -270,6 +315,8 @@ class PyMuPDFStrategy:
                 block, q_num, current_section, current_answer_ref, exam_year
             )
             if q and q.question_text.strip():
+                if page_offsets:
+                    q.page_number = self._find_page(start, page_offsets)
                 questions.append(q)
 
         return questions
@@ -334,6 +381,112 @@ class PyMuPDFStrategy:
         q.knowledge_tag = tags
 
         return q
+
+    def _extract_and_attach_images(
+        self,
+        doc: fitz.Document,
+        questions: list[ParsedQuestion],
+        subject: str,
+        source_stem: str,
+    ) -> None:
+        """Extract embedded images from PDF and attach paths to questions.
+
+        Uses the ImageExtractionService's matching logic internally but
+        operates on in-memory ParsedQuestion objects rather than DB records.
+        """
+        from app.config import get_settings
+
+        settings = get_settings()
+        image_dir = Path(settings.image_dir)
+        min_width, min_height = 200, 150
+
+        # Build question-number → ParsedQuestion mapping
+        q_by_num: dict[int, list[ParsedQuestion]] = {}
+        for q in questions:
+            if q.question_number is not None:
+                q_by_num.setdefault(q.question_number, []).append(q)
+
+        for page_idx in range(len(doc)):
+            page = doc[page_idx]
+
+            # Get question positions on this page
+            q_positions = self._get_question_y_positions(page)
+            # q_positions: list[(question_number, y_top)]
+
+            # Extract qualifying images
+            for img_idx, info in enumerate(page.get_image_info()):
+                xref = info.get("xref", 0)
+                width = info.get("width", 0)
+                height = info.get("height", 0)
+                bbox = info.get("bbox", (0, 0, 0, 0))
+
+                if width < min_width or height < min_height:
+                    continue
+
+                img_y = bbox[1]  # top y-coordinate
+
+                # Find closest question above this image
+                matched_q_num: int | None = None
+                best_distance = float("inf")
+                for q_num, q_y in q_positions:
+                    if q_y <= img_y:
+                        distance = img_y - q_y
+                        if distance < best_distance:
+                            best_distance = distance
+                            matched_q_num = q_num
+
+                if matched_q_num is None:
+                    continue
+
+                # Attach image path to matched questions
+                matched_qs = q_by_num.get(matched_q_num, [])
+                ext = "jpeg"
+                if xref > 0:
+                    try:
+                        img_data = doc.extract_image(xref)
+                        ext = img_data.get("ext", "jpeg")
+                    except Exception:
+                        pass
+
+                img_filename = f"{source_stem}_p{page_idx:03d}_img{img_idx:03d}.{ext}"
+                rel_path = str(Path("questions") / subject / img_filename)
+
+                for q in matched_qs:
+                    if q.page_number is not None and q.page_number != page_idx:
+                        continue  # Skip if question is on a different page
+                    if rel_path not in q.image_paths:
+                        q.image_paths.append(rel_path)
+
+        # Count questions with images
+        img_count = sum(1 for q in questions if q.image_paths)
+        if img_count > 0:
+            logger.info(f"Attached images to {img_count} questions")
+
+    @staticmethod
+    def _get_question_y_positions(page: fitz.Page) -> list[tuple[int, float]]:
+        """Detect question numbers and their y-coordinates on a page.
+
+        Returns list of (question_number, y_top) sorted by y_top.
+        """
+        positions: list[tuple[int, float]] = []
+        text_dict = page.get_text("dict")
+        q_line_re = re.compile(r"^\s*(\d{1,4})\s*[.、．]\s*\S")
+
+        for block in text_dict.get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                line_text = "".join(
+                    span.get("text", "") for span in line.get("spans", [])
+                )
+                m = q_line_re.match(line_text)
+                if m:
+                    q_num = int(m.group(1))
+                    y_top = line["bbox"][1]
+                    positions.append((q_num, y_top))
+
+        positions.sort(key=lambda t: t[1])
+        return positions
 
 
 # ─────────────────────────────────────────────

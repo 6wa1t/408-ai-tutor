@@ -6,9 +6,12 @@ Run with:
 
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.core.exceptions import AppBaseException
@@ -72,6 +75,11 @@ app.include_router(questions_router)
 app.include_router(quiz_router)
 app.include_router(tutor_router)
 app.include_router(misconceptions_router)
+
+# --- Static files: serve extracted question images ---
+_images_dir = Path(settings.image_dir)
+_images_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/images", StaticFiles(directory=str(_images_dir)), name="images")
 
 
 # --- Global exception handler ---

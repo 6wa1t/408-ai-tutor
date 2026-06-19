@@ -114,6 +114,7 @@ class ImportService:
                 analysis=parsed_q.analysis or None,
                 image_path=",".join(parsed_q.image_paths) if parsed_q.image_paths else None,
                 source_pdf=filename,
+                page_number=parsed_q.page_number,
                 exam_year=parsed_q.exam_year or None,
                 text_hash=text_hash,
             )

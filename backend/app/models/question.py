@@ -66,6 +66,9 @@ class Question(Base):
     source_pdf: Mapped[str | None] = mapped_column(
         String(500), nullable=True, comment="来源PDF文件名"
     )
+    page_number: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="来源PDF页码(0-indexed)"
+    )
     exam_year: Mapped[str | None] = mapped_column(
         String(50), nullable=True, comment="统考真题年份: 如'2023统考真题'"
     )

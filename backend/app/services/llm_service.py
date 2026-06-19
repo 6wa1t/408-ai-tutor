@@ -83,6 +83,38 @@ ANSWER_SYSTEM_PROMPT = """你是408计算机考研专业答题助手。给你一
 只返回JSON，不要有其他内容。"""
 
 
+PUA_CORRECTION_PROMPT = """你是一个PDF页面数学符号修正助手。
+
+下面的PDF页面图片中，文本提取工具无法正确识别某些数学符号（显示为乱码字符）。
+请仔细观察图片，将以下题目文本中的乱码部分替换为正确的数学符号。
+
+规则：
+- 使用标准Unicode数学字符（如 ∈, ⊆, ×, ≤, ≥, ∞, ∑, ∫, √, ⊕, ₂ 等）
+- 对于括号：使用标准 ( ) [ ] { }
+- 对于无法用Unicode表示的复杂公式，使用LaTeX格式（$...$）
+- 保持题目文本的其余部分不变，只修正乱码字符
+- 选项文本同样需要修正（如有乱码）
+
+需要修正的题目：
+{questions_block}
+
+严格返回JSON格式：
+{{
+  "corrections": [
+    {{
+      "question_id": 题目ID,
+      "question_text": "修正后的题目正文",
+      "option_a": "修正后的选项A(如有)",
+      "option_b": "修正后的选项B(如有)",
+      "option_c": "修正后的选项C(如有)",
+      "option_d": "修正后的选项D(如有)"
+    }}
+  ]
+}}
+
+只返回JSON，不要有其他内容。"""
+
+
 ESSAY_REFERENCE_PROMPT = """你是408计算机考研综合题/解答题的答题助手。给你一道综合题，请给出标准参考答案和详细解析。
 
 要求：
@@ -414,6 +446,74 @@ class LLMService:
         )
 
         return response.choices[0].message.content or ""
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=15),
+        retry=retry_if_exception_type((APIError, RateLimitError, APIConnectionError)),
+    )
+    def correct_garbled_text(
+        self,
+        image_path: str,
+        questions: list[dict],
+    ) -> dict:
+        """Send page image + garbled questions to vision LLM for PUA correction.
+
+        Args:
+            image_path: Path to rendered page PNG.
+            questions: List of dicts with 'id', 'question_text', 'option_a'-'option_d'.
+
+        Returns:
+            Parsed JSON with 'corrections' list.
+        """
+        path = Path(image_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        # Build questions block for the prompt
+        questions_block = []
+        for q in questions:
+            parts = [f"[ID={q['id']}] 题目: {q['question_text']}"]
+            for letter in ("a", "b", "c", "d"):
+                key = f"option_{letter}"
+                if q.get(key):
+                    parts.append(f"  {letter.upper()}. {q[key]}")
+            questions_block.append("\n".join(parts))
+
+        prompt = PUA_CORRECTION_PROMPT.format(
+            questions_block="\n\n".join(questions_block)
+        )
+
+        # Encode image as base64
+        image_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+        suffix = path.suffix.lower().lstrip(".")
+        mime = f"image/{suffix}" if suffix != "jpg" else "image/jpeg"
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{image_data}"},
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                },
+            ],
+            max_tokens=4000,
+            temperature=0.1,
+        )
+
+        reply = (response.choices[0].message.content or "").strip()
+        logger.info(
+            f"PUA correction for page with {len(questions)} questions: "
+            f"reply_len={len(reply)}"
+        )
+
+        return self._parse_answer_json_loose(reply)
 
     def pdf_page_to_image(self, pdf_path: str, page_num: int) -> str:
         """Convert a PDF page to a PNG image for vision analysis.
