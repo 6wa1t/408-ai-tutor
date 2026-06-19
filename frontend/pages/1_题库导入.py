@@ -1,15 +1,22 @@
 """题库导入页面 — 上传PDF或指定目录导入题目。"""
 
+import sys
+import os
+import pathlib
 import streamlit as st
 import requests
 import json
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+from shared.styles import apply_theme, gradient_header, glow_divider
+
 st.set_page_config(page_title="题库导入", page_icon="📥", layout="wide")
+apply_theme()
 
 # Get API base from session state or default
-api_base = st.session_state.get("api_base", "http://localhost:8000")
+api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
 
-st.title("📥 题库导入")
+gradient_header("📥 题库导入", level=2)
 
 
 def _show_report(report: dict):
@@ -41,11 +48,15 @@ def _show_report(report: dict):
                         st.caption(f"  ... 及其他 {len(errors) - 5} 个错误")
 
 
-tab1, tab2 = st.tabs(["上传PDF文件", "指定目录导入"])
+tab1, tab2 = st.tabs(["📄 上传PDF文件", "📂 指定目录导入"])
 
 # ─── Tab 1: Upload single PDF ───
 with tab1:
-    st.markdown("上传一个408题库PDF文件，系统将自动解析题目并入库。")
+    st.markdown(
+        '<p style="color:#7878a0;margin-bottom:16px;">'
+        '上传一个408题库PDF文件，系统将自动解析题目并入库。</p>',
+        unsafe_allow_html=True,
+    )
 
     uploaded_file = st.file_uploader(
         "选择PDF文件",
@@ -68,7 +79,7 @@ with tab1:
 
                     if response.status_code == 200:
                         report = response.json()
-                        st.success("导入完成！")
+                        st.success("✨ 导入完成！")
                         _show_report(report)
                     else:
                         st.error(f"导入失败: {response.json().get('detail', response.text)}")
@@ -79,7 +90,11 @@ with tab1:
 
 # ─── Tab 2: Directory import ───
 with tab2:
-    st.markdown("指定一个包含多个PDF文件的目录路径，系统将批量导入所有题库。")
+    st.markdown(
+        '<p style="color:#7878a0;margin-bottom:16px;">'
+        '指定一个包含多个PDF文件的目录路径，系统将批量导入所有题库。</p>',
+        unsafe_allow_html=True,
+    )
 
     directory = st.text_input(
         "PDF目录路径",
@@ -101,7 +116,7 @@ with tab2:
 
                     if response.status_code == 200:
                         report = response.json()
-                        st.success("批量导入完成！")
+                        st.success("✨ 批量导入完成！")
                         _show_report(report)
                     else:
                         st.error(f"导入失败: {response.json().get('detail', response.text)}")
@@ -111,25 +126,34 @@ with tab2:
                     st.error(f"导入出错: {e}")
 
 # ─── Show current database stats ───
-st.divider()
-st.subheader("📊 当前题库概况")
+glow_divider()
+st.markdown(
+    '<h3 class="gradient-text-sm" style="font-size:1.2rem;">📊 当前题库概况</h3>',
+    unsafe_allow_html=True,
+)
 
 try:
     resp = requests.get(f"{api_base}/api/questions/stats", timeout=5)
     if resp.status_code == 200:
         stats = resp.json()
         col1, col2 = st.columns(2)
-        col1.metric("题目总数", stats.get("total", 0))
+        with col1:
+            st.metric("题目总数", stats.get("total", 0))
 
         by_subject = stats.get("by_subject", {})
-        if by_subject:
-            col2.write("**各科题目数:**")
-            for subj, cnt in by_subject.items():
-                col2.write(f"- {subj}: {cnt} 题")
-        else:
-            col2.info("题库为空，请先导入PDF")
+        with col2:
+            if by_subject:
+                st.markdown("**各科题目数:**")
+                for subj, cnt in by_subject.items():
+                    st.markdown(
+                        f'<div class="history-row" style="padding:4px 12px;">'
+                        f'<span style="color:#00f0ff;">●</span> {subj}: <strong>{cnt}</strong> 题'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("题库为空，请先导入PDF")
     else:
         st.info("请先启动后端服务")
 except requests.ConnectionError:
     st.info("后端服务未连接，启动后可查看题库统计")
-

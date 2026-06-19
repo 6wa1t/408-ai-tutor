@@ -1,17 +1,28 @@
 """AI Tutor Chat Page — Streamlit frontend for DeepSeek-powered study assistant."""
 
+import sys
+import os
+import pathlib
 import streamlit as st
 import requests
 import json
 
-api_base = st.session_state.get("api_base", "http://localhost:8000")
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+from shared.styles import apply_theme, gradient_header, glow_divider, status_badge
+
+st.set_page_config(page_title="AI助教", page_icon="🤖", layout="wide")
+apply_theme()
+
+api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
 
 # 保留最近20条对话（10轮），防止超出LLM上下文窗口
 MAX_HISTORY = 20
 
-st.set_page_config(page_title="AI助教", page_icon="🤖", layout="wide")
-st.title("🤖 408考研AI助教")
-st.caption("基于DeepSeek大模型，专注408科目复习的智能助教")
+gradient_header("🤖 408考研AI助教", level=2)
+st.markdown(
+    '<p class="tagline">基于DeepSeek大模型 · 专注408科目复习的智能助教</p>',
+    unsafe_allow_html=True,
+)
 
 
 def check_status():
@@ -63,7 +74,11 @@ elif not status.get("configured"):
     )
     st.stop()
 
-st.success(f"✅ AI助教已就绪 — 模型: `{status.get('model', 'unknown')}`")
+# Custom status badge instead of st.success
+model_name = status.get('model', 'unknown')
+status_badge(f"AI助教已就绪 · {model_name}")
+
+st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
 
 
 # ── Session state ──
@@ -75,14 +90,20 @@ if "temperature" not in st.session_state:
 
 # ── Sidebar settings ──
 with st.sidebar:
-    st.header("⚙️ 设置")
+    st.markdown(
+        '<h3 class="gradient-text-sm" style="font-size:1.1rem;">⚙️ 设置</h3>',
+        unsafe_allow_html=True,
+    )
     st.session_state.temperature = st.slider(
         "Temperature", 0.0, 1.5, 0.7, 0.1,
         help="越高越有创意，越低越严谨"
     )
 
-    st.divider()
-    st.subheader("🎯 快捷提问")
+    glow_divider()
+    st.markdown(
+        '<h3 class="gradient-text-sm" style="font-size:1rem;">🎯 快捷提问</h3>',
+        unsafe_allow_html=True,
+    )
     quick_prompts = [
         "请帮我梳理数据结构的知识点框架",
         "解释一下进程和线程的区别",
@@ -97,7 +118,7 @@ with st.sidebar:
             st.session_state.pending_message = prompt
             st.rerun()
 
-    st.divider()
+    glow_divider()
     if st.button("🗑️ 清空对话", use_container_width=True):
         st.session_state.chat_history = []
         st.rerun()

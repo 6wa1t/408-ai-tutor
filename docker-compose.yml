@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./images:/app/images
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - DEBUG=true
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    environment:
+      - API_BASE_URL=http://backend:8000
+    restart: unless-stopped

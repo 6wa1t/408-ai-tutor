@@ -34,8 +34,8 @@ from app.services.pua_detector import (
 
 logger = get_logger("garbled_text_repair")
 
-# Default directory where the user's source PDFs live
-_DEFAULT_PDF_DIR = r"D:\01.王道课后习题做题本"
+# Default directory where the user's source PDFs live (override via PDF_DIR env var)
+_DEFAULT_PDF_DIR = os.environ.get("PDF_DIR", str(Path.home()))
 
 # How many leading characters to use for fingerprint matching
 _FINGERPRINT_LEN = 40

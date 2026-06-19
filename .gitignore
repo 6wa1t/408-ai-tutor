@@ -23,18 +23,35 @@ env/
 *.swp
 *.swo
 
-# Project specific
+# Database (runtime generated)
 *.db
 *.db-shm
 *.db-wal
 *.sqlite3
 *.bak_*
+
+# Testing
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
 logs/*.log
+
+# Images (runtime extracted)
 images/*
 !images/.gitkeep
+
+# Data (runtime generated)
 data/*.pdf
+data/*.db
+
+# Script output (analysis artifacts)
+pua_analysis.txt
+pua_pairs.txt
+pua_*.png
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini

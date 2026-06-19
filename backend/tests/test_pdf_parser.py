@@ -26,23 +26,23 @@ class TestInferSubject:
     """Test subject inference from file paths (checks parent dirs)."""
 
     def test_data_structure_from_parent_dir(self):
-        assert infer_subject(r"D:\01.王道课后习题做题本\数据结构\题本.pdf") == "数据结构"
+        assert infer_subject("/pdfs/数据结构/题本.pdf") == "数据结构"
 
     def test_data_structure_from_filename(self):
-        assert infer_subject(r"D:\some\path\数据结构真题2023.pdf") == "数据结构"
+        assert infer_subject("/some/path/数据结构真题2023.pdf") == "数据结构"
 
     def test_operating_system(self):
-        assert infer_subject(r"D:\01.王道课后习题做题本\操作系统\题本.pdf") == "操作系统"
+        assert infer_subject("/pdfs/操作系统/题本.pdf") == "操作系统"
 
     def test_computer_organization(self):
-        assert infer_subject(r"D:\path\计算机组成原理\王道题本.pdf") == "计算机组成原理"
-        assert infer_subject(r"D:\path\组成原理真题.pdf") == "计算机组成原理"
+        assert infer_subject("/path/计算机组成原理/王道题本.pdf") == "计算机组成原理"
+        assert infer_subject("/path/组成原理真题.pdf") == "计算机组成原理"
 
     def test_computer_network(self):
-        assert infer_subject(r"D:\01.王道课后习题做题本\计算机网络\题本.pdf") == "计算机网络"
+        assert infer_subject("/pdfs/计算机网络/题本.pdf") == "计算机网络"
 
     def test_unknown(self):
-        assert infer_subject(r"D:\some\path\408真题合集.pdf") == "未知科目"
+        assert infer_subject("/some/path/408真题合集.pdf") == "未知科目"
 
 
 class TestCleanPageText:

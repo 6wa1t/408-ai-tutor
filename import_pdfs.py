@@ -1,7 +1,15 @@
-"""Quick import script — parse all 题本 PDFs and import into the database."""
+"""Quick import script — parse 题本 PDFs and import into the database.
 
+Usage:
+    python import_pdfs.py --pdf-dir /path/to/pdf/folder
+    python import_pdfs.py --pdf-dir /path/to/pdf/folder --essay-only
+    python import_pdfs.py --files file1.pdf file2.pdf
+"""
+
+import argparse
 import sys
 import os
+from pathlib import Path
 
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
@@ -10,24 +18,44 @@ from app.database.session import create_tables, SessionLocal
 from app.services.import_service import ImportService
 from app.services.pdf_parser import infer_subject
 
-# One 选择题 version per subject (same content, different layouts — pick A4留白)
-PDF_PATHS = [
-    r"D:\01.王道课后习题做题本\数据结构\题本\【A4留白】27王道《数据结构》 - 选择部分.pdf",
-    r"D:\01.王道课后习题做题本\操作系统\题本\【A4留白】操作系统选择题做题本.pdf",
-    r"D:\01.王道课后习题做题本\计算机组成原理\题本\【A4留白】计算机组成原理选择题做题本.pdf",
-    r"D:\01.王道课后习题做题本\计算机网络\题本\【A4有留白】王道计算机网络选择题.pdf",
-]
+# Subject keywords used to auto-discover PDFs in subdirectories
+_SUBJECT_KEYWORDS = {
+    "数据结构": ["数据结构"],
+    "操作系统": ["操作系统"],
+    "计算机组成原理": ["组成原理", "计组"],
+    "计算机网络": ["计算机网络", "计网"],
+}
 
-# 综合题/解答题 versions
-ESSAY_PATHS = [
-    r"D:\01.王道课后习题做题本\数据结构\题本\【A4留白】27王道《数据结构》 - 解答题部分.pdf",
-    r"D:\01.王道课后习题做题本\操作系统\题本\【A4留白】27王道操作系统综合题做题本.pdf",
-    r"D:\01.王道课后习题做题本\计算机组成原理\题本\【A4留白】计算机组成原理综合题做题本.pdf",
-    r"D:\01.王道课后习题做题本\计算机网络\题本\【A4留白】计算机网络综合题做题本.pdf",
-]
+
+def discover_pdfs(pdf_dir: str) -> list[str]:
+    """Recursively find all PDF files under the given directory."""
+    pdf_dir = Path(pdf_dir)
+    if not pdf_dir.exists():
+        print(f"[ERROR] Directory not found: {pdf_dir}")
+        return []
+    return sorted(str(p) for p in pdf_dir.rglob("*.pdf"))
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Import 408 PDF question banks into the database.")
+    parser.add_argument("--pdf-dir", type=str, help="Root directory containing PDF files (recursive scan)")
+    parser.add_argument("--files", nargs="+", type=str, help="Specific PDF file paths to import")
+    parser.add_argument("--essay-only", action="store_true", help="Only import essay/comprehensive questions")
+    args = parser.parse_args()
+
+    if args.files:
+        pdf_paths = args.files
+    elif args.pdf_dir:
+        pdf_paths = discover_pdfs(args.pdf_dir)
+        if not pdf_paths:
+            print("No PDF files found. Use --pdf-dir or --files to specify paths.")
+            return
+        print(f"Found {len(pdf_paths)} PDF file(s) in {args.pdf_dir}")
+    else:
+        parser.print_help()
+        print("\nPlease specify --pdf-dir or --files.")
+        return
+
     # Ensure tables exist
     create_tables()
 
@@ -39,9 +67,7 @@ def main():
         print("408考研题库导入")
         print("=" * 60)
 
-        all_pdfs = PDF_PATHS + ESSAY_PATHS
-
-        for pdf_path in all_pdfs:
+        for pdf_path in pdf_paths:
             filename = os.path.basename(pdf_path)
             if not os.path.exists(pdf_path):
                 print(f"\n[SKIP] Not found: {filename}")

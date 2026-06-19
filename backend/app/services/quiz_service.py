@@ -135,6 +135,14 @@ class QuizService:
                 except Exception as e:
                     logger.error(f"Misconception analysis failed for Q#{question_id}: {e}")
 
+                # Auto-add to wrong question collection
+                try:
+                    from app.services.wrong_question_service import WrongQuestionService
+                    wq_svc = WrongQuestionService(self.db)
+                    wq_svc.auto_add(question)
+                except Exception as e:
+                    logger.error(f"Wrong question auto-add failed for Q#{question_id}: {e}")
+
         self.db.commit()
 
         logger.info(

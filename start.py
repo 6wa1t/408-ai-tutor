@@ -9,11 +9,17 @@ PROJECT = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(PROJECT, "backend")
 FRONTEND = os.path.join(PROJECT, "frontend")
 
+# Fix Windows encoding: force UTF-8 for all subprocesses
+env = os.environ.copy()
+env["PYTHONUTF8"] = "1"
+env["PYTHONIOENCODING"] = "utf-8"
+
 # Start backend
 backend = subprocess.Popen(
     [sys.executable, "-m", "uvicorn", "app.main:app",
      "--host", "127.0.0.1", "--port", "8000", "--log-level", "warning"],
     cwd=BACKEND,
+    env=env,
 )
 
 # Start frontend (cwd must be frontend/ so Streamlit finds pages/)
@@ -21,6 +27,7 @@ frontend = subprocess.Popen(
     [sys.executable, "-m", "streamlit", "run", "app.py",
      "--server.port", "8501", "--server.headless", "true"],
     cwd=FRONTEND,
+    env=env,
 )
 
 print("=" * 50)

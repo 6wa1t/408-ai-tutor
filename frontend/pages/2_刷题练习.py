@@ -1,13 +1,20 @@
 """刷题练习页面 — 随机抽题/章节顺序、选择题/综合题、答题反馈。"""
 
+import sys
+import os
+import pathlib
 import streamlit as st
 import requests
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+from shared.styles import apply_theme, gradient_header, glow_divider
+
 st.set_page_config(page_title="刷题练习", page_icon="✏️", layout="wide")
+apply_theme()
 
-api_base = st.session_state.get("api_base", "http://localhost:8000")
+api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
 
-st.title("✏️ 刷题练习")
+gradient_header("✏️ 刷题练习", level=2)
 
 # ─── Sidebar ───
 st.sidebar.header("练习设置")
@@ -199,108 +206,117 @@ if questions:
 # ─── Main area: Display questions ───
 
 if not questions:
-    st.markdown("""
-    ### 暂无题目
-
-    请在左侧设置好科目、题型和出题模式后，点击按钮开始练习。
-    """)
+    st.markdown(
+        '<div class="neon-card" style="text-align:center;padding:48px;">'
+        '<h3 style="color:#00f0ff;margin:0 0 12px 0;">暂无题目</h3>'
+        '<p style="color:#7878a0;margin:0;">请在左侧设置好科目、题型和出题模式后，点击按钮开始练习。</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 else:
     for i, q in enumerate(questions):
-        with st.container():
-            st.markdown(f"---")
-            st.markdown(f"**第 {i + 1} 题** | {q.get('subject', '')} · {q.get('chapter', '')} | ID: {q.get('id', '')}")
-            st.markdown(q.get("question_text", ""))
+        # Wrap each question in a styled card
+        st.markdown('<div class="question-card">', unsafe_allow_html=True)
+        st.markdown(
+            f'<span style="color:#00f0ff;font-weight:700;">第 {i + 1} 题</span>'
+            f'<span style="color:#7878a0;"> · {q.get("subject", "")} · {q.get("chapter", "")}'
+            f' · ID: {q.get("id", "")}</span>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(q.get("question_text", ""))
 
-            # Display question images if available
-            image_path = q.get("image_path")
-            if image_path:
-                for img_rel in image_path.split(","):
-                    img_rel = img_rel.strip()
-                    if img_rel:
-                        try:
-                            st.image(
-                                f"{api_base}/images/{img_rel}",
-                                use_container_width=True,
-                            )
-                        except Exception:
-                            st.caption(f"[图片加载失败: {img_rel}]")
+        # Display question images if available
+        image_path = q.get("image_path")
+        if image_path:
+            for img_rel in image_path.split(","):
+                img_rel = img_rel.strip()
+                if img_rel:
+                    try:
+                        st.image(
+                            f"{api_base}/images/{img_rel}",
+                            use_container_width=True,
+                        )
+                    except Exception:
+                        st.caption(f"[图片加载失败: {img_rel}]")
 
-            # Display options
-            opt_a = q.get("option_a") or ""
-            opt_b = q.get("option_b") or ""
-            opt_c = q.get("option_c") or ""
-            opt_d = q.get("option_d") or ""
+        # Display options
+        opt_a = q.get("option_a") or ""
+        opt_b = q.get("option_b") or ""
+        opt_c = q.get("option_c") or ""
+        opt_d = q.get("option_d") or ""
 
-            option_map = {}
-            if opt_a: option_map["A"] = opt_a.strip()
-            if opt_b: option_map["B"] = opt_b.strip()
-            if opt_c: option_map["C"] = opt_c.strip()
-            if opt_d: option_map["D"] = opt_d.strip()
+        option_map = {}
+        if opt_a: option_map["A"] = opt_a.strip()
+        if opt_b: option_map["B"] = opt_b.strip()
+        if opt_c: option_map["C"] = opt_c.strip()
+        if opt_d: option_map["D"] = opt_d.strip()
 
-            if option_map:
-                letters = list(option_map.keys())
-                display_opts = [f"{L}. {option_map[L]}" for L in letters]
-                selected_display = st.radio(
-                    f"选择答案 (第{i+1}题)",
-                    display_opts,
-                    key=f"q_{i}_{q['id']}",
-                    disabled=st.session_state.quiz_submitted,
-                )
-                selected_letter = selected_display[0] if selected_display else ""
-                st.session_state.quiz_answers[q["id"]] = selected_letter
-            else:
-                q_type = q.get("question_type", "essay")
-                type_label = {"essay": "综合题", "fill": "填空题", "other": "综合题"}.get(q_type, q_type)
-                st.caption(f"[{type_label}] 本题无选项，请在下方输入答案")
-                text_ans = st.text_area(
-                    f"输入答案 (第{i+1}题)",
-                    key=f"q_{i}_{q['id']}",
-                    height=80,
-                    disabled=st.session_state.quiz_submitted,
-                )
-                if text_ans:
-                    st.session_state.quiz_answers[q["id"]] = text_ans
+        if option_map:
+            letters = list(option_map.keys())
+            display_opts = [f"{L}. {option_map[L]}" for L in letters]
+            selected_display = st.radio(
+                f"选择答案 (第{i+1}题)",
+                display_opts,
+                key=f"q_{i}_{q['id']}",
+                disabled=st.session_state.quiz_submitted,
+            )
+            selected_letter = selected_display[0] if selected_display else ""
+            st.session_state.quiz_answers[q["id"]] = selected_letter
+        else:
+            q_type = q.get("question_type", "essay")
+            type_label = {"essay": "综合题", "fill": "填空题", "other": "综合题"}.get(q_type, q_type)
+            st.caption(f"[{type_label}] 本题无选项，请在下方输入答案")
+            text_ans = st.text_area(
+                f"输入答案 (第{i+1}题)",
+                key=f"q_{i}_{q['id']}",
+                height=80,
+                disabled=st.session_state.quiz_submitted,
+            )
+            if text_ans:
+                st.session_state.quiz_answers[q["id"]] = text_ans
 
-            # Show result after submission
-            if st.session_state.quiz_submitted and q["id"] in st.session_state.get("quiz_results", {}):
-                result = st.session_state.quiz_results[q["id"]]
-                correct_ans = result.get("correct_answer", "")
-                user_ans = result.get("user_answer", "")
-                answer_ref = result.get("answer_ref", "")
-                graded = result.get("graded", True)
+        # Show result after submission
+        if st.session_state.quiz_submitted and q["id"] in st.session_state.get("quiz_results", {}):
+            result = st.session_state.quiz_results[q["id"]]
+            correct_ans = result.get("correct_answer", "")
+            user_ans = result.get("user_answer", "")
+            answer_ref = result.get("answer_ref", "")
+            graded = result.get("graded", True)
 
-                if not graded:
-                    # 未判分：综合题或 AI 兜底失败，仅展示参考答案/解析供用户对照
-                    if result.get("analysis"):
-                        st.info("⚪ 本题未自动判分（综合题/AI 未能给出答案），请对照下方参考答案自评")
-                        with st.expander("📖 查看参考答案 / 解析"):
-                            st.markdown(result["analysis"])
-                    elif correct_ans == "(暂无答案)" and answer_ref:
-                        st.warning("⚠️ 该题暂无标准答案，无法判定对错")
-                        with st.expander("📖 查看原书答案"):
-                            st.markdown(f"请参考: **{answer_ref}**")
-                    else:
-                        st.warning("⚠️ 本题未能自动判分（AI 未返回有效答案）")
-                elif correct_ans == "(暂无答案)":
-                    st.warning("⚠️ 该题暂无标准答案，无法判定对错")
-                    if answer_ref:
-                        st.caption(f"📖 答案参考: {answer_ref}")
-                elif result["is_correct"]:
-                    st.success(f"✅ 回答正确！正确答案: {correct_ans}")
-                else:
-                    st.error(
-                        f"❌ 回答错误！你的答案: {user_ans}，正确答案: {correct_ans}"
-                    )
-
-                # Show analysis (from AI or database) for graded questions
-                if graded and result.get("analysis"):
-                    with st.expander("📖 查看解析"):
+            if not graded:
+                # 未判分
+                if result.get("analysis"):
+                    st.info("⚪ 本题未自动判分（综合题/AI 未能给出答案），请对照下方参考答案自评")
+                    with st.expander("📖 查看参考答案 / 解析"):
                         st.markdown(result["analysis"])
+                elif correct_ans == "(暂无答案)" and answer_ref:
+                    st.warning("⚠️ 该题暂无标准答案，无法判定对错")
+                    with st.expander("📖 查看原书答案"):
+                        st.markdown(f"请参考: **{answer_ref}**")
+                else:
+                    st.warning("⚠️ 本题未能自动判分（AI 未返回有效答案）")
+            elif correct_ans == "(暂无答案)":
+                st.warning("⚠️ 该题暂无标准答案，无法判定对错")
+                if answer_ref:
+                    st.caption(f"📖 答案参考: {answer_ref}")
+            elif result["is_correct"]:
+                st.success(f"✅ 回答正确！正确答案: {correct_ans}")
+            else:
+                st.error(
+                    f"❌ 回答错误！你的答案: {user_ans}，正确答案: {correct_ans}"
+                )
+
+            # Show analysis (from AI or database) for graded questions
+            if graded and result.get("analysis"):
+                with st.expander("📖 查看解析"):
+                    st.markdown(result["analysis"])
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ─── Submit all answers ───
 if questions and not st.session_state.quiz_submitted:
-    st.markdown("---")
+    glow_divider()
     if st.button("📝 提交所有答案", type="primary"):
         if not st.session_state.quiz_answers:
             st.warning("请至少回答一道题")
@@ -363,12 +379,20 @@ if questions and not st.session_state.quiz_submitted:
                 ungraded = total_to_submit - graded_count
                 extra = f"（另有 {ungraded} 题未判分）" if ungraded > 0 else ""
                 st.markdown(
-                    f"### 本次成绩: {correct_count}/{graded_count} ({accuracy:.1f}%){extra}"
+                    f'<div class="score-card">'
+                    f'<div class="score-value">{correct_count}/{graded_count}</div>'
+                    f'<div style="color:#e0e0f0;font-size:1.2rem;margin-top:8px;">'
+                    f'正确率 {accuracy:.1f}%</div>'
+                    f'{"<div style=\"color:#7878a0;font-size:0.9rem;margin-top:4px;\">另有 " + str(ungraded) + " 题未判分</div>" if ungraded > 0 else ""}'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
             elif total_to_submit > 0:
                 st.markdown(
-                    f"### 本次共作答 {total_to_submit} 题，均未能自动判分"
-                    "（综合题或 AI 未返回答案）"
+                    f'<div class="neon-card" style="text-align:center;">'
+                    f'<p style="color:#7878a0;">本次共作答 {total_to_submit} 题，均未能自动判分'
+                    f'（综合题或 AI 未返回答案）</p></div>',
+                    unsafe_allow_html=True,
                 )
 
             st.rerun()
@@ -383,9 +407,14 @@ if st.session_state.quiz_submitted and "quiz_results" in st.session_state:
     if graded_count > 0:
         accuracy = correct_count / graded_count * 100
         extra = f"（另有 {ungraded_count} 题未判分）" if ungraded_count > 0 else ""
-        st.markdown("---")
+        glow_divider()
         st.markdown(
-            f"### 📊 本次成绩: {correct_count}/{graded_count} ({accuracy:.1f}%){extra}"
+            f'<div class="score-card">'
+            f'<div class="score-value">{correct_count}/{graded_count}</div>'
+            f'<div style="color:#e0e0f0;font-size:1.2rem;margin-top:8px;">'
+            f'正确率 {accuracy:.1f}%{extra}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
     # In sequential mode, show "next chapter" button
@@ -395,6 +424,7 @@ if st.session_state.quiz_submitted and "quiz_results" in st.session_state:
         idx = st.session_state.quiz_chapter_idx
         if chs and idx < len(chs) - 1:
             next_ch = chs[idx + 1]["name"]
+            st.markdown('<div style="margin-top:20px;"></div>', unsafe_allow_html=True)
             if st.button(f"➡ 进入下一章: {next_ch}", type="primary"):
                 st.session_state.quiz_chapter_idx = idx + 1
                 _clean_quiz_state()
