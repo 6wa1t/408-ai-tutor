@@ -1,6 +1,8 @@
 # 408考研AI专属助教
 
-![408考研AI助教首页](homepage.png)
+<p align="center">
+  <img src="homepage.png" alt="408考研AI助教首页" width="90%" />
+</p>
 
 一款面向计算机考研408统考的**智能刷题 + 错题分析 + 知识盲区管理**工具。支持从 PDF 题库批量导入题目，提供在线刷题、AI助教答疑、薄弱知识点分析等功能，**并能通过 MCP 协议与本地 AI Agent（如 QoderWork CN）及笔记工具（FlowUs 等）联动，打造从「刷题→分析→记录→复习」的完整学习闭环。**
 
