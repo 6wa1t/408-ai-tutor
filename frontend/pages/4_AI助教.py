@@ -162,7 +162,18 @@ elif not status.get("configured"):
     st.stop()
 
 model_name = status.get('model', 'unknown')
-status_badge(f"AI助教已就绪 · {model_name}")
+
+# Toggle button for right panel + status badge
+toggle_col, badge_col = st.columns([0.1, 0.9])
+with toggle_col:
+    if "right_panel_open" not in st.session_state:
+        st.session_state.right_panel_open = False
+    icon = "◀" if st.session_state.right_panel_open else "▶"
+    if st.button(icon, key="toggle_right_panel"):
+        st.session_state.right_panel_open = not st.session_state.right_panel_open
+        st.rerun()
+with badge_col:
+    status_badge(f"AI助教已就绪 · {model_name}")
 
 st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
 
@@ -297,39 +308,42 @@ with st.sidebar:
                         st.rerun()
 
 
-# ── Main area: two-column layout (chat left, settings right) ──
+# ── Main area: conditional right panel ──
 
-chat_col, right_col = st.columns([3, 1])
+if st.session_state.right_panel_open:
+    chat_col, right_col = st.columns([5, 1])
 
-with right_col:
-    st.markdown(
-        '<h3 class="gradient-text-sm" style="font-size:1.05rem;">⚙️ 设置</h3>',
-        unsafe_allow_html=True,
-    )
-    st.session_state.temperature = st.slider(
-        "Temperature", 0.0, 1.5, 0.7, 0.1,
-        help="越高越有创意，越低越严谨"
-    )
+    with right_col:
+        st.markdown(
+            '<h3 class="gradient-text-sm" style="font-size:1.05rem;">⚙️ 设置</h3>',
+            unsafe_allow_html=True,
+        )
+        st.session_state.temperature = st.slider(
+            "Temperature", 0.0, 1.5, 0.7, 0.1,
+            help="越高越有创意，越低越严谨"
+        )
 
-    glow_divider()
+        glow_divider()
 
-    st.markdown(
-        '<h3 class="gradient-text-sm" style="font-size:1.05rem;">🎯 快捷提问</h3>',
-        unsafe_allow_html=True,
-    )
-    quick_prompts = [
-        "请帮我梳理数据结构的知识点框架",
-        "解释一下进程和线程的区别",
-        "Cache映射方式有哪些？各自优缺点？",
-        "TCP三次握手的过程和原因",
-        "帮我分析这道题的解题思路",
-        "408考研各科的分值占比是多少？",
-        "请给我制定一个30天的408复习计划",
-    ]
-    for prompt in quick_prompts:
-        if st.button(prompt, use_container_width=True):
-            st.session_state.pending_message = prompt
-            st.rerun()
+        st.markdown(
+            '<h3 class="gradient-text-sm" style="font-size:1.05rem;">🎯 快捷提问</h3>',
+            unsafe_allow_html=True,
+        )
+        quick_prompts = [
+            "请帮我梳理数据结构的知识点框架",
+            "解释一下进程和线程的区别",
+            "Cache映射方式有哪些？各自优缺点？",
+            "TCP三次握手的过程和原因",
+            "帮我分析这道题的解题思路",
+            "408考研各科的分值占比是多少？",
+            "请给我制定一个30天的408复习计划",
+        ]
+        for prompt in quick_prompts:
+            if st.button(prompt, use_container_width=True):
+                st.session_state.pending_message = prompt
+                st.rerun()
+else:
+    chat_col = st.container()
 
 with chat_col:
     # ── Display chat history ──
