@@ -28,10 +28,10 @@ logger = get_logger("import_service")
 class ImportService:
     """Service for importing PDF question banks into the database."""
 
-    def __init__(self, db: Session, parser: PDFParser | None = None):
+    def __init__(self, db: Session, parser: PDFParser | None = None, force_vlm: bool = False):
         self.db = db
         self.repo = QuestionRepository(db)
-        self.parser = parser or PDFParser()
+        self.parser = parser or PDFParser(force_vlm=force_vlm)
 
     def scan_directory(self, directory: str) -> list[str]:
         """Scan a directory for PDF files.
@@ -79,6 +79,14 @@ class ImportService:
             result.errors.append(f"Parse error: {e}")
             result.error_count = 1
             return result
+
+        # Track whether VLM fallback was used
+        if self.parser.used_vlm:
+            result.vlm_used = True
+            logger.warning(
+                f"[VLM] {filename} 使用了视觉大模型提取，"
+                f"共处理约 {len(parsed_items)} 道题，会产生额外 API 费用"
+            )
 
         result.total_found = len(parsed_items)
 

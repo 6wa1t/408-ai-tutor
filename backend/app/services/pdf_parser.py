@@ -494,17 +494,170 @@ class PyMuPDFStrategy:
 # ─────────────────────────────────────────────
 
 class VLMFallbackStrategy:
-    """Placeholder for multimodal VLM-based parsing.
+    """VLM-based parsing for scanned/image PDFs.
 
-    Will be implemented in Phase 4 to extract answers and
-    analysis from scanned original textbook PDFs.
+    Renders each page to an image, sends to vision LLM for structured
+    extraction of questions, options, chapter/section context, and metadata.
+
+    Use when PyMuPDFStrategy returns 0 questions (scanned PDFs).
     """
 
-    def parse(self, pdf_path: str) -> list[ParsedQuestion]:
-        raise NotImplementedError(
-            "VLM fallback strategy will be implemented in Phase 4. "
-            "Original textbook PDFs are scanned images requiring OCR/VLM."
+    def __init__(self, llm_service=None):
+        """Initialize with optional pre-configured LLM service.
+
+        Args:
+            llm_service: An LLMService instance. If None, uses the global singleton.
+        """
+        self._llm = llm_service
+
+    @property
+    def llm(self):
+        if self._llm is None:
+            from app.services.llm_service import get_llm_service
+            self._llm = get_llm_service()
+        return self._llm
+
+    def parse(
+        self,
+        pdf_path: str,
+        page_range: tuple[int, int] | None = None,
+    ) -> list[ParsedQuestion]:
+        """Parse a scanned PDF using vision LLM.
+
+        Args:
+            pdf_path: Path to the PDF file.
+            page_range: Optional (start, end) 0-indexed page range.
+                        If None, processes all pages.
+
+        Returns:
+            List of ParsedQuestion objects.
+        """
+        pdf_path_obj = Path(pdf_path)
+        if not pdf_path_obj.exists():
+            raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+        # Fail fast if vision API is not configured
+        if not self.llm.is_vision_configured():
+            raise RuntimeError(
+                "视觉模型未配置。扫描PDF需要视觉API支持。"
+                "请在 .env 中设置 VISION_API_KEY（通义千问VL）。"
+                "详见 .env.example 中的说明。"
+            )
+
+        logger.info(f"VLM fallback: opening PDF {pdf_path}")
+        doc = fitz.open(pdf_path)
+        subject = infer_subject(pdf_path)
+        total_pages = len(doc)
+
+        if page_range:
+            start, end = page_range
+        else:
+            start, end = 0, total_pages
+        end = min(end, total_pages)
+
+        questions: list[ParsedQuestion] = []
+        # Track chapter/section context across pages
+        context: dict[str, str] = {"chapter": "", "section": ""}
+
+        try:
+            for page_idx in range(start, end):
+                try:
+                    # Render page to image
+                    img_path = self.llm.pdf_page_to_image(pdf_path, page_idx)
+
+                    # Send to VLM for extraction
+                    result = self.llm.analyze_questions_page(img_path, context)
+
+                    # Update context from VLM response
+                    page_context = result.get("context", {})
+                    if page_context.get("chapter"):
+                        context["chapter"] = page_context["chapter"]
+                    if page_context.get("section"):
+                        context["section"] = page_context["section"]
+
+                    # Convert to ParsedQuestion objects
+                    for q_data in result.get("questions", []):
+                        q = self._build_parsed_question(
+                            q_data, context, page_idx, subject
+                        )
+                        if q and q.question_text.strip():
+                            questions.append(q)
+
+                    # Progress logging
+                    if (page_idx - start + 1) % 5 == 0 or page_idx == end - 1:
+                        logger.info(
+                            f"VLM progress: page {page_idx + 1}/{end} "
+                            f"({len(questions)} questions so far)"
+                        )
+
+                except Exception as e:
+                    logger.error(
+                        f"VLM error on page {page_idx + 1}: {e}"
+                    )
+                    # Continue with next page
+                    continue
+
+        finally:
+            doc.close()
+
+        logger.info(
+            f"VLM fallback complete: {len(questions)} questions from "
+            f"{end - start} pages of {pdf_path_obj.name} "
+            f"(subject={subject})"
         )
+        return questions
+
+    @staticmethod
+    def _build_parsed_question(
+        q_data: dict,
+        context: dict[str, str],
+        page_idx: int,
+        subject: str,
+    ) -> ParsedQuestion | None:
+        """Convert a VLM response dict into a ParsedQuestion."""
+        text = str(q_data.get("text", "")).strip()
+        if not text:
+            return None
+
+        q = ParsedQuestion(
+            question_number=q_data.get("number"),
+            question_text=text,
+            page_number=page_idx,
+        )
+
+        # Options
+        options = q_data.get("options", {})
+        if isinstance(options, dict):
+            for letter in ("A", "B", "C", "D", "E"):
+                if letter in options and options[letter]:
+                    q.options[letter] = str(options[letter]).strip()
+
+        # Answer and analysis
+        q.answer = str(q_data.get("answer", "")).strip().upper()
+        q.analysis = str(q_data.get("analysis", "")).strip()
+
+        # Exam year
+        q.exam_year = str(q_data.get("exam_year", "")).strip()
+
+        # Build section from context
+        section = context.get("section", "")
+        chapter = context.get("chapter", "")
+        if section:
+            q.section = section
+        elif chapter:
+            q.section = chapter
+
+        # Build knowledge tags
+        tags = []
+        if section:
+            tags.append(section)
+        elif chapter:
+            tags.append(chapter)
+        if q.exam_year:
+            tags.append(q.exam_year)
+        q.knowledge_tag = tags
+
+        return q
 
 
 # ─────────────────────────────────────────────
@@ -512,15 +665,76 @@ class VLMFallbackStrategy:
 # ─────────────────────────────────────────────
 
 class PDFParser:
-    """Facade that auto-selects the best parsing strategy."""
+    """Facade that auto-selects the best parsing strategy.
 
-    def __init__(self, strategy: PDFParserStrategy | None = None):
-        self.strategy = strategy or PyMuPDFStrategy()
+    Default flow:
+    1. Try PyMuPDFStrategy (fast, text-based)
+    2. If 0 questions found → auto-fallback to VLMFallbackStrategy (vision-based)
+
+    Set force_vlm=True to skip text extraction and go directly to VLM.
+    """
+
+    def __init__(
+        self,
+        strategy: PDFParserStrategy | None = None,
+        force_vlm: bool = False,
+    ):
+        self._explicit_strategy = strategy
+        self._force_vlm = force_vlm
+        self._used_vlm = False  # Track whether VLM was used in last parse
+
+    @property
+    def strategy(self) -> PDFParserStrategy:
+        return self._explicit_strategy or PyMuPDFStrategy()
+
+    @property
+    def used_vlm(self) -> bool:
+        """True if the last parse() call used VLM fallback."""
+        return self._used_vlm
 
     def parse(self, pdf_path: str) -> list[ParsedQuestion]:
-        """Parse a PDF file using the configured strategy."""
-        logger.info(f"Parsing PDF with {type(self.strategy).__name__}: {pdf_path}")
-        return self.strategy.parse(pdf_path)
+        """Parse a PDF file with auto-fallback from text to vision.
+
+        Args:
+            pdf_path: Path to the PDF file.
+
+        Returns:
+            List of ParsedQuestion objects.
+        """
+        self._used_vlm = False
+
+        # Force VLM mode
+        if self._force_vlm:
+            logger.info(f"Force VLM mode for: {pdf_path}")
+            vlm = VLMFallbackStrategy()
+            self._used_vlm = True
+            return vlm.parse(pdf_path)
+
+        # Explicit strategy provided — use it directly
+        if self._explicit_strategy is not None:
+            logger.info(
+                f"Parsing PDF with {type(self._explicit_strategy).__name__}: {pdf_path}"
+            )
+            return self._explicit_strategy.parse(pdf_path)
+
+        # Auto-select: try PyMuPDF first
+        text_strategy = PyMuPDFStrategy()
+        logger.info(f"Parsing PDF with PyMuPDFStrategy: {pdf_path}")
+        results = text_strategy.parse(pdf_path)
+
+        if results:
+            logger.info(f"PyMuPDF extracted {len(results)} questions")
+            return results
+
+        # PyMuPDF found nothing — auto-fallback to VLM
+        logger.warning(
+            f"PyMuPDF extracted 0 questions from {pdf_path}. "
+            f"Auto-fallback to VLM (vision-based extraction). "
+            f"This will make API calls for each page."
+        )
+        vlm = VLMFallbackStrategy()
+        self._used_vlm = True
+        return vlm.parse(pdf_path)
 
     def parse_with_text_hash(self, pdf_path: str) -> list[tuple[ParsedQuestion, str]]:
         """Parse and compute SHA256 hash for each question (for deduplication)."""

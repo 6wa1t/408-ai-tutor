@@ -70,6 +70,40 @@ VISION_SYSTEM_PROMPT = """你是一个PDF页面OCR助手。请仔细阅读提供
 只返回JSON，不要有其他内容。"""
 
 
+VLM_QUESTION_EXTRACT_PROMPT = """你是一个408考研题库OCR助手。请仔细阅读此PDF页面图片，提取所有题目信息。
+
+识别要求：
+1. 提取每道题的题号、题干文本、选项(A/B/C/D/E)
+2. 如果页面顶部有章节标题（如"第X章"、"X.X 小节名"），记录到 context 中
+3. 如果题目包含真题年份标记（如【2023统考真题】、【2021年真题】），提取到 exam_year 字段
+4. 如果页面包含答案或解析部分，一并提取
+5. 对于综合题/解答题（没有ABCD选项的），options 留空对象 {{}}
+6. 数学公式使用LaTeX格式（$...$）
+
+{context_hint}
+
+严格返回以下JSON格式，不要有其他内容：
+{{
+  "context": {{
+    "chapter": "第X章 章名(如有)",
+    "section": "X.X 小节名(如有)"
+  }},
+  "questions": [
+    {{
+      "number": 题号,
+      "text": "题干完整文本",
+      "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+      "answer": "答案字母(如有)",
+      "analysis": "解析内容(如有)",
+      "exam_year": "2023统考真题(如有，无则留空字符串)"
+    }}
+  ]
+}}
+
+如果该页面没有题目（如目录页、空白页），返回 {{"context": {{}}, "questions": []}}。
+只返回JSON，不要有其他内容。"""
+
+
 ANSWER_SYSTEM_PROMPT = """你是408计算机考研专业答题助手。给你一道408考研选择题，请给出正确答案和详细解析。
 
 要求：
@@ -133,12 +167,19 @@ ESSAY_REFERENCE_PROMPT = """你是408计算机考研综合题/解答题的答题
 # ─────────────────────────────────────────────
 
 class LLMService:
-    """DeepSeek LLM service using OpenAI-compatible API."""
+    """DeepSeek LLM service using OpenAI-compatible API.
+
+    Text completions go through the main LLM (DeepSeek).
+    Vision/multimodal calls go through a separate vision client
+    (通义千问VL by default, since DeepSeek doesn't support vision input).
+    """
 
     def __init__(self):
         settings = get_settings()
         self.model = settings.llm_model
+        self.vision_model = settings.vision_model
         self._client: OpenAI | None = None
+        self._vision_client: OpenAI | None = None
 
     @property
     def client(self) -> OpenAI:
@@ -164,6 +205,27 @@ class LLMService:
             and settings.llm_api_key != "sk-your-deepseek-api-key-here"
             and settings.llm_api_base
         )
+
+    @property
+    def vision_client(self) -> OpenAI:
+        """Lazy-initialized OpenAI client for vision API (Qwen-VL / DashScope)."""
+        if self._vision_client is None:
+            settings = get_settings()
+            if not settings.vision_api_key:
+                raise RuntimeError(
+                    "Vision API key not configured. "
+                    "Set VISION_API_KEY in .env file to enable scanned PDF extraction."
+                )
+            self._vision_client = OpenAI(
+                base_url=settings.vision_api_base,
+                api_key=settings.vision_api_key,
+            )
+        return self._vision_client
+
+    def is_vision_configured(self) -> bool:
+        """Check if vision API is properly configured."""
+        settings = get_settings()
+        return bool(settings.vision_api_key and settings.vision_api_base)
 
     # ── Chat completion ──
 
@@ -422,8 +484,8 @@ class LLMService:
         suffix = path.suffix.lower().lstrip(".")
         mime = f"image/{suffix}" if suffix != "jpg" else "image/jpeg"
 
-        response = self.client.chat.completions.create(
-            model=self.model,
+        response = self.vision_client.chat.completions.create(
+            model=self.vision_model,
             messages=[
                 {"role": "system", "content": VISION_SYSTEM_PROMPT},
                 {
@@ -446,6 +508,75 @@ class LLMService:
         )
 
         return response.choices[0].message.content or ""
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=15),
+    )
+    def analyze_questions_page(
+        self,
+        image_path: str,
+        context: dict | None = None,
+    ) -> dict:
+        """Analyze a scanned PDF page image and extract structured question data.
+
+        Uses the specialized VLM_QUESTION_EXTRACT_PROMPT for 408 question extraction.
+
+        Args:
+            image_path: Path to the rendered page image.
+            context: Optional previous context dict with 'chapter' and 'section'
+                     to help the model maintain continuity across pages.
+
+        Returns:
+            Parsed dict with 'context' and 'questions' keys.
+            On failure returns {"context": {}, "questions": []}.
+        """
+        path = Path(image_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        # Build context hint for the model
+        context_hint = ""
+        if context:
+            parts = []
+            if context.get("chapter"):
+                parts.append(f"当前章节: {context['chapter']}")
+            if context.get("section"):
+                parts.append(f"当前小节: {context['section']}")
+            if parts:
+                context_hint = "上下文提示（来自前序页面）:\n" + "\n".join(parts)
+
+        prompt = VLM_QUESTION_EXTRACT_PROMPT.format(context_hint=context_hint)
+
+        # Encode image as base64
+        image_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+        suffix = path.suffix.lower().lstrip(".")
+        mime = f"image/{suffix}" if suffix != "jpg" else "image/jpeg"
+
+        response = self.vision_client.chat.completions.create(
+            model=self.vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{image_data}"},
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                },
+            ],
+            max_tokens=4000,
+            temperature=0.1,
+        )
+
+        reply = (response.choices[0].message.content or "").strip()
+        logger.info(
+            f"VLM page analysis: reply_len={len(reply)}"
+        )
+
+        return self._parse_answer_json_loose(reply)
 
     @retry(
         stop=stop_after_attempt(2),
@@ -489,8 +620,8 @@ class LLMService:
         suffix = path.suffix.lower().lstrip(".")
         mime = f"image/{suffix}" if suffix != "jpg" else "image/jpeg"
 
-        response = self.client.chat.completions.create(
-            model=self.model,
+        response = self.vision_client.chat.completions.create(
+            model=self.vision_model,
             messages=[
                 {
                     "role": "user",

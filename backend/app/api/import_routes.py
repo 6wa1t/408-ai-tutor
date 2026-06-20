@@ -51,17 +51,21 @@ def _validate_directory_path(directory: str) -> Path:
 @router.post("/upload", response_model=ImportReportResponse)
 async def upload_and_import_pdf(
     file: UploadFile = File(..., description="PDF题库文件"),
+    force_vlm: bool = Form(False, description="强制使用视觉大模型(VLM)提取，跳过文本提取"),
     db: Session = Depends(get_db),
 ):
     """Upload a single PDF file and import its questions.
 
     The file is saved to a temporary location, parsed, and then
     imported into the database.
+
+    Set force_vlm=True to skip text extraction and use VLM directly
+    (useful for known-scanned/image-based PDFs).
     """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
 
-    logger.info(f"Received upload: {file.filename}")
+    logger.info(f"Received upload: {file.filename} (force_vlm={force_vlm})")
 
     # Save to temp file
     tmp_dir = tempfile.mkdtemp()
@@ -70,7 +74,7 @@ async def upload_and_import_pdf(
         with open(tmp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        service = ImportService(db)
+        service = ImportService(db, force_vlm=force_vlm)
         result = service.import_pdf(str(tmp_path))
 
         return ImportReportResponse(
@@ -96,6 +100,7 @@ async def upload_and_import_pdf(
 @router.post("/directory", response_model=ImportReportResponse)
 async def import_directory(
     directory: str = Form(..., description="PDF题库目录路径"),
+    force_vlm: bool = Form(False, description="强制使用视觉大模型(VLM)提取"),
     db: Session = Depends(get_db),
 ):
     """Import all PDF files from a specified directory.
@@ -106,10 +111,10 @@ async def import_directory(
     # Validate path to prevent directory traversal
     _validate_directory_path(directory)
 
-    logger.info(f"Directory import request: {directory}")
+    logger.info(f"Directory import request: {directory} (force_vlm={force_vlm})")
 
     try:
-        service = ImportService(db)
+        service = ImportService(db, force_vlm=force_vlm)
         report = service.import_directory(directory)
         return report
     except Exception as e:

@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "deepseek-chat"
 
+    # --- Vision LLM (VLM fallback, scanned PDF extraction) ---
+    # Separate from text LLM because DeepSeek doesn't support vision input.
+    # Default: 通义千问VL via Alibaba DashScope (OpenAI-compatible API).
+    vision_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    vision_api_key: str = ""
+    vision_model: str = "qwen-vl-max"
+
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",

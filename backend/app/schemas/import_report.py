@@ -22,6 +22,7 @@ class PDFImportResult(BaseModel):
     skipped_count: int = Field(0, description="跳过数(去重)")
     error_count: int = Field(0, description="失败数")
     errors: list[str] = Field(default_factory=list, description="错误详情")
+    vlm_used: bool = Field(False, description="是否使用了视觉大模型(VLM)提取")
 
 
 class ImportReportResponse(BaseModel):
