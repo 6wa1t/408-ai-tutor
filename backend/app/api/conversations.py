@@ -1,9 +1,10 @@
 """Conversations API routes — 对话历史的CRUD管理。"""
 
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -28,13 +29,28 @@ class AddMessageRequest(BaseModel):
     content: str = Field(...)
 
 
+class BookmarksUpdate(BaseModel):
+    bookmarks: list[dict] = Field(default_factory=list)
+
+
 class ConversationOut(BaseModel):
     id: int
     title: str
     created_at: datetime
     updated_at: datetime
+    bookmarks: list = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
+
+    @field_validator("bookmarks", mode="before")
+    @classmethod
+    def parse_bookmarks(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return v or []
 
 
 class MessageOut(BaseModel):
@@ -140,3 +156,21 @@ def delete_conversation(conv_id: int, db: Session = Depends(get_db)):
 
     db.delete(conv)
     db.commit()
+
+
+@router.put("/{conv_id}/bookmarks", response_model=ConversationOut)
+def update_bookmarks(
+    conv_id: int,
+    body: BookmarksUpdate,
+    db: Session = Depends(get_db),
+):
+    """Replace all bookmarks for a conversation."""
+    conv = db.query(Conversation).get(conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    conv.bookmarks = json.dumps(body.bookmarks, ensure_ascii=False)
+    conv.updated_at = datetime.now()
+    db.commit()
+    db.refresh(conv)
+    return conv

@@ -7,6 +7,7 @@ import sys
 import os
 import pathlib
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
@@ -148,6 +149,19 @@ def api_delete_conversation(conv_id: int) -> bool:
         return False
 
 
+def api_update_bookmarks(conv_id: int, bookmarks: list[dict]) -> bool:
+    """Replace all bookmarks for a conversation."""
+    try:
+        resp = requests.put(
+            f"{api_base}/api/conversations/{conv_id}/bookmarks",
+            json={"bookmarks": bookmarks},
+            timeout=5,
+        )
+        return resp.status_code == 200
+    except requests.ConnectionError:
+        return False
+
+
 # ── Check LLM status ──
 
 status = check_status()
@@ -188,6 +202,12 @@ if "active_conversation_id" not in st.session_state:
     st.session_state.active_conversation_id = None
 if "conversations" not in st.session_state:
     st.session_state.conversations = []
+if "chat_history_full" not in st.session_state:
+    st.session_state.chat_history_full = []
+if "view_up_to" not in st.session_state:
+    st.session_state.view_up_to = None
+if "scroll_to_top" not in st.session_state:
+    st.session_state.scroll_to_top = False
 
 
 def switch_conversation(conv_id: int):
@@ -198,6 +218,8 @@ def switch_conversation(conv_id: int):
         {"role": m["role"], "content": m["content"]}
         for m in messages
     ]
+    st.session_state.chat_history_full = list(st.session_state.chat_history)
+    st.session_state.view_up_to = None
 
 
 def ensure_active_conversation() -> int | None:
@@ -245,7 +267,22 @@ if not st.session_state.conversations and st.session_state.active_conversation_i
             st.session_state.chat_history = []
 
 
-# ── Sidebar (conversation list only) ──
+def jump_to_node(msg_idx):
+    """Callback: jump to a conversation node, showing only that Q&A pair."""
+    full = st.session_state.chat_history_full
+    end = min(msg_idx + 2, len(full))
+    st.session_state.chat_history = list(full[msg_idx:end])
+    st.session_state.view_up_to = msg_idx
+    st.session_state.scroll_to_top = True
+
+
+def restore_full_view():
+    """Callback: restore the full conversation view."""
+    st.session_state.chat_history = list(st.session_state.chat_history_full)
+    st.session_state.view_up_to = None
+
+
+# ── Sidebar (conversation list + nodes) ──
 
 with st.sidebar:
     # New conversation button
@@ -308,6 +345,47 @@ with st.sidebar:
                                 st.session_state.chat_history = []
                         st.rerun()
 
+    # ── Conversation nodes (auto from user messages) ──
+    glow_divider()
+    st.markdown(
+        '<h3 class="gradient-text-sm" style="font-size:1rem;">📌 对话节点</h3>',
+        unsafe_allow_html=True,
+    )
+
+    # Collect user message indices as nodes
+    full = st.session_state.chat_history_full
+    user_nodes = [
+        (i, msg) for i, msg in enumerate(full) if msg["role"] == "user"
+    ]
+
+    view_up_to = st.session_state.view_up_to
+    is_truncated = view_up_to is not None and view_up_to > 0
+
+    if is_truncated:
+        st.button(
+            "↩ 查看完整对话",
+            use_container_width=True,
+            type="primary",
+            on_click=restore_full_view,
+            key="restore_full",
+        )
+
+    if not user_nodes:
+        st.caption("发送消息后自动生成节点")
+    else:
+        for idx, (msg_idx, msg) in enumerate(user_nodes):
+            preview = msg["content"][:18].replace("\n", " ")
+            is_active_node = view_up_to == msg_idx
+            node_type = "primary" if is_active_node else "tertiary"
+            st.button(
+                f"#{idx + 1}  {preview}",
+                key=f"node_{msg_idx}",
+                use_container_width=True,
+                type=node_type,
+                on_click=jump_to_node,
+                args=(msg_idx,),
+            )
+
 
 # ── Main area: conditional right panel ──
 
@@ -364,10 +442,17 @@ else:
     chat_col = st.container()
 
 with chat_col:
-    # ── Display chat history ──
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
-            st.markdown(msg["content"])
+    # Clear scroll flag
+    if st.session_state.scroll_to_top:
+        st.session_state.scroll_to_top = False
+
+    # Use a dynamic key for the chat container to force scroll reset on node jump
+    chat_key = f"chat_{st.session_state.view_up_to or 'full'}"
+    with st.container(key=chat_key):
+        for msg in st.session_state.chat_history:
+            avatar = "🧑" if msg["role"] == "user" else "🤖"
+            with st.chat_message(msg["role"], avatar=avatar):
+                st.markdown(msg["content"])
 
 
 # ── Handle message sending (shared by chat_input and sidebar quick prompts) ──
@@ -380,8 +465,14 @@ def process_user_message(user_msg: str):
         st.error("无法创建对话，请检查后端服务是否正常运行。")
         return
 
+    # If viewing a truncated node, restore full history before appending
+    if st.session_state.view_up_to is not None:
+        st.session_state.chat_history = list(st.session_state.chat_history_full)
+        st.session_state.view_up_to = None
+
     # Add user message to UI
     st.session_state.chat_history.append({"role": "user", "content": user_msg})
+    st.session_state.chat_history_full.append({"role": "user", "content": user_msg})
 
     # Persist user message
     api_add_message(conv_id, "user", user_msg)
@@ -408,6 +499,7 @@ def process_user_message(user_msg: str):
         st.markdown(reply)
 
     st.session_state.chat_history.append({"role": "assistant", "content": reply})
+    st.session_state.chat_history_full.append({"role": "assistant", "content": reply})
 
     # Persist AI reply
     api_add_message(conv_id, "assistant", reply)

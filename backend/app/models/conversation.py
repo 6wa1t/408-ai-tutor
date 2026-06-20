@@ -26,6 +26,9 @@ class Conversation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.now, onupdate=datetime.now
     )
+    bookmarks: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]", comment="书签JSON"
+    )
 
     # Relationship: one conversation has many messages
     messages: Mapped[list["ChatMessage"]] = relationship(

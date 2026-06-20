@@ -47,6 +47,22 @@ async def lifespan(app: FastAPI):
         create_tables()
         logger.info("Database tables created (dev mode)")
 
+        # Migration: add bookmarks column if missing
+        from app.database.session import engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            try:
+                conn.execute(
+                    text(
+                        "ALTER TABLE conversations "
+                        "ADD COLUMN bookmarks TEXT NOT NULL DEFAULT '[]'"
+                    )
+                )
+                conn.commit()
+                logger.info("Migration: added bookmarks column to conversations")
+            except Exception:
+                conn.rollback()  # Column already exists
+
     yield
 
     # Shutdown
