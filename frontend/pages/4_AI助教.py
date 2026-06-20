@@ -234,7 +234,7 @@ if not st.session_state.conversations and st.session_state.active_conversation_i
             st.session_state.chat_history = []
 
 
-# ── Sidebar ──
+# ── Sidebar (conversation list only) ──
 
 with st.sidebar:
     # New conversation button
@@ -264,7 +264,6 @@ with st.sidebar:
             title = conv.get("title", "新对话")
             is_active = cid == active_id
 
-            # Display conversation item with button + delete
             cols = st.columns([0.85, 0.15])
             with cols[0]:
                 label = f"{'▸ ' if is_active else '  '}{title}"
@@ -289,7 +288,6 @@ with st.sidebar:
                             c for c in st.session_state.conversations if c["id"] != cid
                         ]
                         if active_id == cid:
-                            # Switch to another conversation or None
                             remaining = st.session_state.conversations
                             if remaining:
                                 switch_conversation(remaining[0]["id"])
@@ -298,11 +296,14 @@ with st.sidebar:
                                 st.session_state.chat_history = []
                         st.rerun()
 
-    glow_divider()
 
-    # Settings
+# ── Main area: two-column layout (chat left, settings right) ──
+
+chat_col, right_col = st.columns([3, 1])
+
+with right_col:
     st.markdown(
-        '<h3 class="gradient-text-sm" style="font-size:1.1rem;">⚙️ 设置</h3>',
+        '<h3 class="gradient-text-sm" style="font-size:1.05rem;">⚙️ 设置</h3>',
         unsafe_allow_html=True,
     )
     st.session_state.temperature = st.slider(
@@ -311,8 +312,9 @@ with st.sidebar:
     )
 
     glow_divider()
+
     st.markdown(
-        '<h3 class="gradient-text-sm" style="font-size:1rem;">🎯 快捷提问</h3>',
+        '<h3 class="gradient-text-sm" style="font-size:1.05rem;">🎯 快捷提问</h3>',
         unsafe_allow_html=True,
     )
     quick_prompts = [
@@ -329,12 +331,11 @@ with st.sidebar:
             st.session_state.pending_message = prompt
             st.rerun()
 
-
-# ── Display chat history ──
-
-for msg in st.session_state.chat_history:
-    with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
-        st.markdown(msg["content"])
+with chat_col:
+    # ── Display chat history ──
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
+            st.markdown(msg["content"])
 
 
 # ── Handle message sending (shared by chat_input and sidebar quick prompts) ──
