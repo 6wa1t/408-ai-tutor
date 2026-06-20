@@ -47,11 +47,19 @@ async def lifespan(app: FastAPI):
         create_tables()
         logger.info("Database tables created (dev mode)")
 
-        # Migration: add bookmarks column if missing
+        # Migration: add bookmarks column if missing.
+        # Check existing columns via PRAGMA first so we (a) skip the no-op ALTER
+        # when the column already exists, and (b) do NOT swallow real DB errors
+        # behind a bare `except Exception`.
         from app.database.session import engine
         from sqlalchemy import text
         with engine.connect() as conn:
-            try:
+            existing_cols = {
+                row[1] for row in conn.execute(
+                    text("PRAGMA table_info(conversations)")
+                )
+            }
+            if "bookmarks" not in existing_cols:
                 conn.execute(
                     text(
                         "ALTER TABLE conversations "
@@ -60,8 +68,10 @@ async def lifespan(app: FastAPI):
                 )
                 conn.commit()
                 logger.info("Migration: added bookmarks column to conversations")
-            except Exception:
-                conn.rollback()  # Column already exists
+            else:
+                logger.debug(
+                    "Migration: bookmarks column already exists, skipping"
+                )
 
     yield
 
