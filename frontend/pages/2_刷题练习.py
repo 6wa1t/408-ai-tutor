@@ -305,6 +305,15 @@ else:
                 st.error(
                     f"❌ 回答错误！你的答案: {user_ans}，正确答案: {correct_ans}"
                 )
+                # 轻提示：错题/误区自动收集是辅助任务，失败不影响判分与统计，
+                # 但需要让用户知道（否则会以为已记录实际没记录）。
+                # 仅当后端返回标志位且为 False 时显示；旧后端无此字段默认不提示。
+                if result.get("misconception_synced", True) is False or \
+                   result.get("wrong_question_synced", True) is False:
+                    st.caption(
+                        "⚠️ 本题的错题/误区分析未能自动记录（AI 服务异常或未配置），"
+                        "不影响本次刷题成绩。可稍后重试或手动加入错题集。"
+                    )
 
             # Show analysis (from AI or database) for graded questions
             if graded and result.get("analysis"):

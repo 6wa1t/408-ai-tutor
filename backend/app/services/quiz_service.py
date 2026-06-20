@@ -115,6 +115,13 @@ class QuizService:
             graded = True
             is_correct = user_answer.strip().upper() == correct_answer.upper()
 
+        # Auxiliary-task success flags (default True = no notice shown).
+        # Only flipped to False inside the graded-wrong-answer branch below.
+        # Declared here so the return statement is well-defined for ungraded
+        # submissions (综合题 / AI 兜底失败) as well.
+        misconception_synced = True
+        wrong_question_synced = True
+
         # Only record attempts that were actually graded.
         # Ungraded submissions (综合题 or AI 兜底失败) must NOT pollute accuracy
         # or weak-knowledge statistics.
@@ -128,12 +135,20 @@ class QuizService:
                         self.weak_repo.update_stats(tag, is_correct)
 
             # Wrong answer (with a real correct answer) → generate misconception analysis
+            # These are best-effort auxiliary tasks: failure must NOT block the quiz
+            # result. We capture success/failure flags so the frontend can surface a
+            # gentle notice (the user otherwise has no way to know auto-collection
+            # silently failed).
             if not is_correct:
                 try:
                     msvc = MisconceptionService(self.db)
                     msvc.analyze_wrong_answer(question, user_answer, correct_answer)
                 except Exception as e:
-                    logger.error(f"Misconception analysis failed for Q#{question_id}: {e}")
+                    misconception_synced = False
+                    logger.error(
+                        f"Misconception analysis failed for Q#{question_id}: {e}",
+                        exc_info=True,
+                    )
 
                 # Auto-add to wrong question collection
                 try:
@@ -141,7 +156,11 @@ class QuizService:
                     wq_svc = WrongQuestionService(self.db)
                     wq_svc.auto_add(question)
                 except Exception as e:
-                    logger.error(f"Wrong question auto-add failed for Q#{question_id}: {e}")
+                    wrong_question_synced = False
+                    logger.error(
+                        f"Wrong question auto-add failed for Q#{question_id}: {e}",
+                        exc_info=True,
+                    )
 
         self.db.commit()
 
@@ -161,6 +180,8 @@ class QuizService:
             analysis=analysis or None,
             knowledge_tag=question.knowledge_tag,
             answer_ref=question.answer_ref or None,
+            misconception_synced=misconception_synced,
+            wrong_question_synced=wrong_question_synced,
         )
 
     # ── Helpers ──

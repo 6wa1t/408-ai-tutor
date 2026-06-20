@@ -27,6 +27,16 @@ class QuizResult(BaseModel):
     analysis: str | None = None
     knowledge_tag: str | None = None
     answer_ref: str | None = None
+    misconception_synced: bool = Field(
+        True,
+        description="误区分析是否成功记录。False 表示辅助任务失败（不影响判分与统计），"
+        "前端可据此给出轻提示。",
+    )
+    wrong_question_synced: bool = Field(
+        True,
+        description="错题自动入库是否成功。False 表示辅助任务失败（不影响判分与统计），"
+        "前端可据此给出轻提示。",
+    )
 
 
 class RandomQuizRequest(BaseModel):
