@@ -28,6 +28,7 @@ from app.api.quiz import router as quiz_router
 from app.api.tutor import router as tutor_router
 from app.api.misconceptions import router as misconceptions_router
 from app.api.wrong_questions import router as wrong_questions_router
+from app.api.conversations import router as conversations_router
 
 
 settings = get_settings()
@@ -77,6 +78,7 @@ app.include_router(quiz_router)
 app.include_router(tutor_router)
 app.include_router(misconceptions_router)
 app.include_router(wrong_questions_router)
+app.include_router(conversations_router)
 
 # --- Static files: serve extracted question images ---
 _images_dir = Path(settings.image_dir)
