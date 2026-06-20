@@ -275,7 +275,7 @@ with st.sidebar:
             title = conv.get("title", "新对话")
             is_active = cid == active_id
 
-            cols = st.columns([0.85, 0.15])
+            cols = st.columns([0.9, 0.1])
             with cols[0]:
                 label = f"{'▸ ' if is_active else '  '}{title}"
                 btn_type = "primary" if is_active else "secondary"
@@ -290,9 +290,10 @@ with st.sidebar:
                         st.rerun()
             with cols[1]:
                 if st.button(
-                    "✕",
+                    "🗑",
                     key=f"del_{cid}",
                     use_container_width=True,
+                    type="tertiary",
                 ):
                     if api_delete_conversation(cid):
                         st.session_state.conversations = [
@@ -311,6 +312,23 @@ with st.sidebar:
 # ── Main area: conditional right panel ──
 
 if st.session_state.right_panel_open:
+    # CSS to make right column a sticky panel (doesn't scroll with page)
+    st.html("""<style>
+        div[data-testid="stColumn"]:last-child {
+            position: sticky;
+            top: 3.5rem;
+            align-self: flex-start;
+        }
+        div[data-testid="stColumn"]:last-child > div[data-testid="stVerticalBlock"] {
+            border-left: 1px solid rgba(100, 120, 200, 0.15);
+            padding: 0.5rem 0.8rem !important;
+            background: rgba(15, 18, 35, 0.4);
+            border-radius: 8px;
+            max-height: calc(100vh - 6rem);
+            overflow-y: auto;
+        }
+    </style>""")
+
     chat_col, right_col = st.columns([5, 1])
 
     with right_col:
