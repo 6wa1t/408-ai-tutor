@@ -47,7 +47,6 @@ for key, default in [
     ("quiz_answers", {}),
     ("quiz_submitted", False),
     ("quiz_results", {}),
-    ("quiz_chapters", []),
     ("quiz_chapter_idx", 0),
     ("quiz_mode", ""),
 ]:
@@ -191,10 +190,11 @@ questions = st.session_state.quiz_questions
 if questions:
     mode_text = "随机出题" if st.session_state.quiz_mode == "random" else "按章节顺序"
     type_text = question_type_label
-    if st.session_state.quiz_mode == "sequential" and st.session_state.quiz_chapters:
+    chapters_cache_key = st.session_state.get("_chapters_subject")
+    if st.session_state.quiz_mode == "sequential" and chapters_cache_key:
         idx = st.session_state.quiz_chapter_idx
-        chs = st.session_state[st.session_state._chapters_subject]
-        if idx < len(chs):
+        chs = st.session_state.get(chapters_cache_key, [])
+        if chs and idx < len(chs):
             ch_info = chs[idx]
             st.info(f"📖 {mode_text} · {type_text} · **{ch_info['name']}** · 共 {len(questions)} 题")
         else:
