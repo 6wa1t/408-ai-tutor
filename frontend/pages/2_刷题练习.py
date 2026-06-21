@@ -2,7 +2,6 @@
 
 import sys
 import pathlib
-import re
 import urllib.parse
 import streamlit as st
 import requests
@@ -18,61 +17,6 @@ apply_theme()
 api_base = get_api_base()
 
 gradient_header("✏️ 刷题练习", level=2)
-
-
-def _format_question_text(text: str) -> str:
-    """格式化题目文本：包裹代码块、改善子问题排版。
-
-    1. 检测 C 语言函数代码段（通过花括号深度计数），用 markdown 代码围栏包裹
-    2. 在子问题编号前插入段落间距
-    """
-    if not text:
-        return text
-
-    # --- 1. 代码块检测（逐行扫描 + 花括号深度计数）---
-    code_start_re = re.compile(
-        r'^(int|float|void|unsigned|char|double|long)\s+\w+\s*\('
-    )
-    lines = text.split('\n')
-    result = []
-    in_code = False
-    brace_depth = 0
-
-    for line in lines:
-        stripped = line.strip()
-
-        if not in_code and code_start_re.match(stripped):
-            # 检测到函数定义开头，开始代码块
-            in_code = True
-            brace_depth = stripped.count('{') - stripped.count('}')
-            result.append('\n```c')
-            result.append(line)
-            if brace_depth <= 0 and '{' in stripped:
-                # 单行函数（不太可能但安全处理）
-                result.append('```\n')
-                in_code = False
-            continue
-
-        if in_code:
-            brace_depth += stripped.count('{') - stripped.count('}')
-            result.append(line)
-            if brace_depth <= 0:
-                # 函数代码块结束
-                result.append('```\n')
-                in_code = False
-            continue
-
-        result.append(line)
-
-    text = '\n'.join(result)
-
-    # --- 2. 子问题编号前加段落分隔 ---
-    text = re.sub(
-        r'\n([（(][1-9]\d*[）)])',
-        r'\n\n\n\1',
-        text,
-    )
-    return text
 
 # ─── Sidebar ───
 st.sidebar.header("练习设置")
@@ -293,7 +237,7 @@ else:
             f' · ID: {q.get("id", "")}</span>',
             unsafe_allow_html=True,
         )
-        st.markdown(_format_question_text(q.get("question_text", "")))
+        st.markdown(q.get("question_text", ""))
 
         # Display question images if available
         image_path = q.get("image_path")

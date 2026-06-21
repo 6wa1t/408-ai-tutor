@@ -24,6 +24,7 @@ from app.repositories.question_repo import QuestionRepository
 from app.schemas.import_report import PDFImportResult, ImportReportResponse
 from app.services.image_extractor import ImageExtractionService
 from app.services.pdf_parser import PDFParser, infer_subject
+from app.services.text_cleaner import clean_question_text
 
 logger = get_logger("import_service")
 
@@ -176,14 +177,14 @@ class ImportService:
                 chapter=parsed_q.section or None,
                 knowledge_tag=",".join(parsed_q.knowledge_tag) if parsed_q.knowledge_tag else None,
                 question_type="choice" if parsed_q.options else "other",
-                question_text=parsed_q.question_text,
-                option_a=parsed_q.options.get("A"),
-                option_b=parsed_q.options.get("B"),
-                option_c=parsed_q.options.get("C"),
-                option_d=parsed_q.options.get("D"),
+                question_text=clean_question_text(parsed_q.question_text),
+                option_a=clean_question_text(parsed_q.options.get("A")) if parsed_q.options.get("A") else None,
+                option_b=clean_question_text(parsed_q.options.get("B")) if parsed_q.options.get("B") else None,
+                option_c=clean_question_text(parsed_q.options.get("C")) if parsed_q.options.get("C") else None,
+                option_d=clean_question_text(parsed_q.options.get("D")) if parsed_q.options.get("D") else None,
                 answer=parsed_q.answer or "",
                 answer_ref=parsed_q.answer_ref or None,
-                analysis=parsed_q.analysis or None,
+                analysis=clean_question_text(parsed_q.analysis) if parsed_q.analysis else None,
                 image_path=",".join(parsed_q.image_paths) if parsed_q.image_paths else None,
                 source_pdf=filename,
                 page_number=parsed_q.page_number,
