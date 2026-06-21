@@ -2,6 +2,7 @@
 
 import sys
 import pathlib
+import re
 import urllib.parse
 import streamlit as st
 import requests
@@ -17,6 +18,22 @@ apply_theme()
 api_base = get_api_base()
 
 gradient_header("✏️ 刷题练习", level=2)
+
+
+def _format_question_text(text: str) -> str:
+    """在子问题编号前插入换行，改善综合题排版。
+
+    匹配模式: （1）（2）... 或 (1) (2) ... 前面非行首时自动加换行。
+    """
+    if not text:
+        return text
+    # 在全角/半角子问题编号前加双换行（排除已经在行首的情况）
+    text = re.sub(
+        r'(?<!\n)(?<!^)([（(][1-9]\d*[）)])',
+        r'\n\n\1',
+        text,
+    )
+    return text
 
 # ─── Sidebar ───
 st.sidebar.header("练习设置")
@@ -237,7 +254,7 @@ else:
             f' · ID: {q.get("id", "")}</span>',
             unsafe_allow_html=True,
         )
-        st.markdown(q.get("question_text", ""))
+        st.markdown(_format_question_text(q.get("question_text", "")))
 
         # Display question images if available
         image_path = q.get("image_path")
@@ -248,10 +265,12 @@ else:
                 if img_rel:
                     try:
                         encoded_path = urllib.parse.quote(img_rel, safe="/")
-                        st.image(
-                            f"{public_base}/images/{encoded_path}",
-                            use_container_width=True,
-                        )
+                        img_col, _ = st.columns([5, 3])
+                        with img_col:
+                            st.image(
+                                f"{public_base}/images/{encoded_path}",
+                                use_container_width=True,
+                            )
                     except Exception:
                         st.caption(f"[图片加载失败: {img_rel}]")
 

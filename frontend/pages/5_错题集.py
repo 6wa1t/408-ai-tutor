@@ -2,6 +2,7 @@
 
 import sys
 import pathlib
+import re
 import urllib.parse
 import streamlit as st
 import requests
@@ -15,6 +16,19 @@ st.set_page_config(page_title="错题集", page_icon="📕", layout="wide")
 apply_theme()
 
 api_base = get_api_base()
+
+
+def _format_question_text(text: str) -> str:
+    """在子问题编号前插入换行，改善综合题排版。"""
+    if not text:
+        return text
+    text = re.sub(
+        r'(?<!\n)(?<!^)([（(][1-9]\d*[）)])',
+        r'\n\n\1',
+        text,
+    )
+    return text
+
 
 gradient_header("📕 错题集", level=2)
 
@@ -264,7 +278,7 @@ if st.session_state.wq_review_mode:
     wid = q["wrong_id"]
 
     st.markdown(f"**{q.get('subject', '')}** · {q.get('chapter', '')}")
-    st.markdown(q.get("question_text", ""))
+    st.markdown(_format_question_text(q.get("question_text", "")))
 
     # Image
     img = q.get("image_path")
@@ -274,7 +288,9 @@ if st.session_state.wq_review_mode:
             img_rel = img_rel.strip()
             if img_rel:
                 try:
-                    st.image(f"{public_base}/images/{urllib.parse.quote(img_rel, safe='/')}", use_container_width=True)
+                    img_col, _ = st.columns([5, 3])
+                    with img_col:
+                        st.image(f"{public_base}/images/{urllib.parse.quote(img_rel, safe='/')}", use_container_width=True)
                 except Exception:
                     pass
 
