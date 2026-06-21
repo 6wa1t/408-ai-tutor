@@ -9,7 +9,7 @@ import requests
 # Streamlit pages need explicit path setup to find shared/ module
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider
-from shared.api import get_api_base
+from shared.api import get_api_base, get_public_api_base
 
 st.set_page_config(page_title="刷题练习", page_icon="✏️", layout="wide")
 apply_theme()
@@ -242,13 +242,14 @@ else:
         # Display question images if available
         image_path = q.get("image_path")
         if image_path:
+            public_base = get_public_api_base()
             for img_rel in image_path.split(","):
                 img_rel = img_rel.strip()
                 if img_rel:
                     try:
                         encoded_path = urllib.parse.quote(img_rel, safe="/")
                         st.image(
-                            f"{api_base}/images/{encoded_path}",
+                            f"{public_base}/images/{encoded_path}",
                             use_container_width=True,
                         )
                     except Exception:

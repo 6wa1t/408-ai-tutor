@@ -40,4 +40,5 @@ services:
         condition: service_healthy
     environment:
       - API_BASE_URL=http://backend:8000
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:8000}
     restart: unless-stopped
