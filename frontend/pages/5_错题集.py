@@ -19,12 +19,12 @@ api_base = get_api_base()
 
 
 def _format_question_text(text: str) -> str:
-    """在子问题编号前插入换行，改善综合题排版。"""
+    """在子问题编号前插入段落间距，改善综合题排版。"""
     if not text:
         return text
     text = re.sub(
-        r'(?<!\n)(?<!^)([（(][1-9]\d*[）)])',
-        r'\n\n\1',
+        r'\n([（(][1-9]\d*[）)])',
+        r'\n\n\n\1',
         text,
     )
     return text
