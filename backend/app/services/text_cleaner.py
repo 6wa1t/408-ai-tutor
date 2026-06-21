@@ -3,7 +3,7 @@
 清洗步骤:
 1. 检测 C 语言函数代码段（花括号深度计数），包裹为 ```c 代码围栏
 2. 子问题编号前添加段落分隔
-3. 非代码区域的 \\n 替换为 <br>（保留代码块内换行）
+3. 非代码区域的 \\n 替换为 markdown 行尾双空格换行（保留代码块内换行）
 4. 清理常见 PDF 扫描多余字符
 
 所有导入流程（API 上传 / CLI 脚本）和存量数据清洗均调用此模块，
@@ -54,8 +54,6 @@ def _detect_code_blocks(lines: list[str]) -> list[tuple[int, int]]:
 
 # 装饰性重复符号行（如 ⏟⏟⏟、‾‾‾、___）
 _DECORATIVE_LINE_RE = re.compile(r'^[⏟⏞⎵⎴‾_~\-=]{3,}$')
-# 多余空行合并
-_MULTI_BR_RE = re.compile(r'(<br\s*/?>\s*){3,}')
 
 
 def _clean_pdf_artifacts(text: str) -> str:
@@ -84,10 +82,15 @@ def clean_question_text(text: str) -> str:
     1. 清理 PDF 扫描多余字符
     2. 检测 C 代码块并包裹为 ```c 围栏
     3. 子问题编号前加段落分隔（\\n\\n\\n）
-    4. 非代码区 \\n → <br>；代码区保留 \\n
+    4. 非代码区 \\n → 行尾双空格+\\n；代码区保留 \\n
     """
     if not text:
         return text
+
+    # ── Step 0: 还原已有的 <br> 标签为 \\n（幂等性保证）──
+    # 当文本已经过旧版清洗器处理（用 <br> 换行），重新清洗时
+    # 需要先将 <br> 还原为 \\n，再走正常流程
+    text = re.sub(r'<br\s*/?>', '\n', text)
 
     # ── Step 1: PDF 扫描清理 ──
     text = _clean_pdf_artifacts(text)
@@ -101,7 +104,7 @@ def clean_question_text(text: str) -> str:
     text = _SUB_Q_RE.sub(r'\n\n\n\1', text)
     lines = text.split('\n')
 
-    # ── Step 4: 分区处理 — 代码块保留 \\n，其余 \\n → <br> ──
+    # ── Step 4: 分区处理 — 代码块保留 \\n，其余 \\n → 行尾双空格换行 ──
     # 构建行索引集合，标记哪些行属于代码块
     code_line_indices: set[int] = set()
     for start, end in code_blocks:
@@ -119,7 +122,7 @@ def clean_question_text(text: str) -> str:
         if is_code_line and not in_code:
             # 进入代码块：先输出之前积累的非代码行
             if current:
-                sections.append('<br>'.join(current))
+                sections.append('  \n'.join(current))
                 current = []
             in_code = True
             sections.append('```c\n')
@@ -141,7 +144,7 @@ def clean_question_text(text: str) -> str:
         sections.append('\n'.join(current) if current else '')
         sections.append('\n```\n')
     elif current:
-        sections.append('<br>'.join(current))
+        sections.append('  \n'.join(current))
 
     return ''.join(sections)
 
