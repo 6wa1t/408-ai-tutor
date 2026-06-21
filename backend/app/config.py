@@ -32,9 +32,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # --- Database ---
-    database_url: str = (
-        f"sqlite:///{PROJECT_ROOT / 'data' / 'questions.db'}"
-    ).replace("\\", "/")
+    database_url: str = f"sqlite:///{PROJECT_ROOT / 'data' / 'questions.db'}"
 
     # --- Logging ---
     log_level: str = "INFO"
