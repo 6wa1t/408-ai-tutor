@@ -5,8 +5,9 @@
 text_cleaner.clean_question_text()，包括：
 - C 代码块包裹为 markdown 代码围栏
 - 子问题编号前加段落分隔
-- 非代码区 \\n → <br>
+- 非代码区 \\n → 行尾双空格换行（markdown 原生）
 - 清理 PDF 扫描多余字符
+- 还原已有的 <br> 标签为 \\n 后重新处理（幂等）
 
 用法:
     python scripts/clean_existing_questions.py [--dry-run] [--db PATH]
