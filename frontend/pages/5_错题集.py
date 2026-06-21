@@ -2,6 +2,7 @@
 
 import sys
 import pathlib
+import urllib.parse
 import streamlit as st
 import requests
 
@@ -272,7 +273,7 @@ if st.session_state.wq_review_mode:
             img_rel = img_rel.strip()
             if img_rel:
                 try:
-                    st.image(f"{api_base}/images/{img_rel}", use_container_width=True)
+                    st.image(f"{api_base}/images/{urllib.parse.quote(img_rel, safe='/')}", use_container_width=True)
                 except Exception:
                     pass
 

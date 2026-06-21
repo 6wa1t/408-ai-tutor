@@ -2,6 +2,7 @@
 
 import sys
 import pathlib
+import urllib.parse
 import streamlit as st
 import requests
 
@@ -245,8 +246,9 @@ else:
                 img_rel = img_rel.strip()
                 if img_rel:
                     try:
+                        encoded_path = urllib.parse.quote(img_rel, safe="/")
                         st.image(
-                            f"{api_base}/images/{img_rel}",
+                            f"{api_base}/images/{encoded_path}",
                             use_container_width=True,
                         )
                     except Exception:
