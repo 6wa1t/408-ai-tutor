@@ -11,6 +11,8 @@ services:
       - ./logs:/app/logs
     environment:
       - DEBUG=${DEBUG:-false}
+      - PYTHONUTF8=1
+      - PYTHONIOENCODING=utf-8
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_API_BASE=${LLM_API_BASE:-https://api.deepseek.com}
       - LLM_MODEL=${LLM_MODEL:-deepseek-chat}

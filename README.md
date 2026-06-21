@@ -254,15 +254,24 @@ python import_pdfs.py --pdf-dir /path/to/your/pdf/folder
 ## Docker 部署 (可选)
 
 ```bash
-# 构建并启动
-docker-compose up -d
+# 1. 配置 API Key（可选，不配也能启动但AI功能不可用）
+cp .env.example .env
+# 编辑 .env，填入你的 LLM_API_KEY（DeepSeek）
 
-# 访问
+# 2. 构建并启动（Docker Compose 自动读取 .env）
+docker compose up -d
+
+# 3. 访问
 # 前端: http://localhost:8501
 # 后端: http://localhost:8000
 ```
 
-首次运行需在 `.env` 中配置 API Key，Docker 会自动挂载 `data/` 目录持久化数据。
+> 💡 **关于 `.env` 文件**：Docker Compose 自动读取项目根目录的 `.env` 文件，
+> 将其中定义的变量注入到容器环境变量中。没有 `.env` 也能启动，
+> 但 AI 助教功能会降级（显示"API未配置"提示），不影响刷题等核心功能。
+>
+> Docker 会自动挂载 `data/`、`images/`、`logs/` 目录持久化数据，
+> 重启容器不会丢失题库和答题记录。
 
 ## 开发说明
 
