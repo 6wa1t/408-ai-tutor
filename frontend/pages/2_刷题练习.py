@@ -387,12 +387,17 @@ if questions and not st.session_state.quiz_submitted:
                 accuracy = correct_count / graded_count * 100
                 ungraded = total_to_submit - graded_count
                 extra = f"（另有 {ungraded} 题未判分）" if ungraded > 0 else ""
+                ungraded_html = (
+                    '<div style="color:#7878a0;font-size:0.9rem;margin-top:4px;">'
+                    f"另有 {ungraded} 题未判分</div>"
+                    if ungraded > 0 else ""
+                )
                 st.markdown(
                     f'<div class="score-card">'
                     f'<div class="score-value">{correct_count}/{graded_count}</div>'
                     f'<div style="color:#e0e0f0;font-size:1.2rem;margin-top:8px;">'
                     f'正确率 {accuracy:.1f}%</div>'
-                    f'{"<div style=\"color:#7878a0;font-size:0.9rem;margin-top:4px;\">另有 " + str(ungraded) + " 题未判分</div>" if ungraded > 0 else ""}'
+                    f'{ungraded_html}'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
