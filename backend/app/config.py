@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # --- Application ---
     app_name: str = "408考研AI专属助教"
-    app_version: str = "0.1.0"
+    app_version: str = "0.2.1"
     debug: bool = False
 
     # --- Database ---
