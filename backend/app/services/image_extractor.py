@@ -139,6 +139,11 @@ class ImageExtractionService:
     ) -> tuple[int, int]:
         """Extract images from one PDF and link them to questions.
 
+        Matching strategy:
+        1. Try matching by question number (extracted from question_text).
+        2. If that fails (parser stripped numbers), fall back to matching
+           by page_number (all images on page N → questions on page N).
+
         Returns:
             (images_saved, questions_updated)
         """
@@ -146,55 +151,69 @@ class ImageExtractionService:
         source_stem = Path(pdf_path).stem
         source_filename = Path(pdf_path).name
 
-        # Pre-fetch all DB questions that belong to this source PDF, keyed by
-        # question_number for fast lookup.
-        db_questions_map = self._build_db_questions_map(source_filename)
-        if not db_questions_map:
+        # Try matching by question number first
+        db_qmap = self._build_db_questions_map(source_filename)
+        use_page_fallback = not db_qmap
+
+        if use_page_fallback:
+            # Fallback: match by page_number
+            db_pagemap = self._build_db_page_map(source_filename)
+            if not db_pagemap:
+                logger.info(
+                    "  No DB questions for %s — skipping image extraction",
+                    source_filename,
+                )
+                return 0, 0
             logger.info(
-                "  No DB questions for %s — skipping image extraction", source_filename
+                "  Using page-number fallback for %s: %d questions on %d pages",
+                source_filename,
+                sum(len(v) for v in db_pagemap.values()),
+                len(db_pagemap),
             )
-            return 0, 0
 
         doc = fitz.open(pdf_path)
         try:
             images_saved = 0
             questions_updated = 0
-            # Track the last question number seen on the previous page so that
-            # images appearing *before* any question on a page can be attributed.
             last_q_num_prev_page: int | None = None
 
             for page_idx in range(len(doc)):
                 page = doc[page_idx]
 
-                # 1. Find question positions on this page
                 question_positions = self._get_question_positions(page)
-                # question_positions: list of (question_number, y_top)
-
-                # 2. Extract qualifying images from this page
                 page_images = self._extract_page_images(doc, page_idx)
 
-                # 3. Match images to questions and update DB
-                updated = self._match_images_to_questions(
-                    page_images=page_images,
-                    question_positions=question_positions,
-                    page_idx=page_idx,
-                    db_questions_map=db_questions_map,
-                    subject=subject,
-                    source_stem=source_stem,
-                    last_q_num_prev_page=last_q_num_prev_page,
-                    dry_run=dry_run,
-                )
+                if use_page_fallback:
+                    # Page-based matching: all images on this page →
+                    # all questions on this page
+                    updated = self._match_images_by_page(
+                        page_images=page_images,
+                        page_idx=page_idx,
+                        db_pagemap=db_pagemap,
+                        subject=subject,
+                        source_stem=source_stem,
+                        dry_run=dry_run,
+                    )
+                else:
+                    updated = self._match_images_to_questions(
+                        page_images=page_images,
+                        question_positions=question_positions,
+                        page_idx=page_idx,
+                        db_questions_map=db_qmap,
+                        subject=subject,
+                        source_stem=source_stem,
+                        last_q_num_prev_page=last_q_num_prev_page,
+                        dry_run=dry_run,
+                    )
                 questions_updated += updated
 
                 if not dry_run:
-                    # Save images to disk
                     for img in page_images:
                         self._save_image(img, subject, source_stem)
                     images_saved += len(page_images)
                 else:
                     images_saved += len(page_images)
 
-                # Update "last question number" for next page's carry-over logic
                 if question_positions:
                     last_q_num_prev_page = question_positions[-1][0]
 
@@ -260,6 +279,81 @@ class ImageExtractionService:
             sum(len(v) for v in qmap.values()),
         )
         return qmap
+
+    def _build_db_page_map(
+        self, source_filename: str
+    ) -> dict[int, list[Question]]:
+        """Build ``{page_number: [Question, ...]}`` map as fallback when
+        question numbers can't be extracted from question_text.
+
+        Used when the parser strips leading numbers during import.
+        """
+        questions: list[Question] = (
+            self.db.query(Question)
+            .filter(Question.source_pdf == source_filename)
+            .filter(Question.page_number.isnot(None))
+            .order_by(Question.id)
+            .all()
+        )
+        from collections import defaultdict
+        pmap: dict[int, list[Question]] = defaultdict(list)
+        for q in questions:
+            pmap[q.page_number].append(q)
+
+        logger.info(
+            "  DB page map for %s: %d questions on %d pages",
+            source_filename,
+            len(questions),
+            len(pmap),
+        )
+        return dict(pmap)
+
+    def _match_images_by_page(
+        self,
+        page_images: list[ExtractedImage],
+        page_idx: int,
+        db_pagemap: dict[int, list[Question]],
+        subject: str,
+        source_stem: str,
+        dry_run: bool,
+    ) -> int:
+        """Fallback matcher: assign all images on a page to all questions
+        on that page (using page_number field).
+
+        Used when question numbers can't be extracted from question_text.
+        """
+        if not page_images:
+            return 0
+
+        questions_on_page = db_pagemap.get(page_idx, [])
+        if not questions_on_page:
+            return 0
+
+        updated_count = 0
+        for img in page_images:
+            rel_path = self._image_rel_path(
+                subject, source_stem, page_idx, img.img_idx, img.ext
+            )
+            for q in questions_on_page:
+                if dry_run:
+                    logger.info(
+                        "  [DRY-RUN] Would link Q(id=%d page=%d) -> %s",
+                        q.id, q.page_number, rel_path,
+                    )
+                    updated_count += 1
+                    continue
+
+                if q.image_path:
+                    existing = [p.strip() for p in q.image_path.split(",") if p.strip()]
+                    if rel_path not in existing:
+                        existing.append(rel_path)
+                        q.image_path = ",".join(existing)
+                        updated_count += 1
+                else:
+                    q.image_path = rel_path
+                    updated_count += 1
+
+        return updated_count
 
     @staticmethod
     def _extract_question_number(text: str) -> int | None:

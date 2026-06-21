@@ -249,7 +249,7 @@ class ImportService:
                     pua_fixed += 1
 
             if pua_fixed > 0:
-                self.db.flush()
+                self.db.commit()
                 logger.info(
                     f"[后处理] {filename}: 修复 {pua_fixed} 道题的PUA乱码"
                 )
