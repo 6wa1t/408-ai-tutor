@@ -6,8 +6,17 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# Project root: 408-ai-tutor/
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# Project root detection:
+# - Local dev: config.py is at backend/app/config.py → 3 levels up = project root
+# - Docker:    config.py is at /app/app/config.py     → 2 levels up = /app (= project root)
+_config_file = Path(__file__).resolve()
+_candidate = _config_file.parent.parent.parent
+if (_candidate / "backend").is_dir():
+    # Local dev: project_root/backend/app/config.py
+    PROJECT_ROOT = _candidate
+else:
+    # Docker: /app/app/config.py (backend/ was copied flat into WORKDIR /app)
+    PROJECT_ROOT = _config_file.parent.parent
 
 
 class Settings(BaseSettings):
