@@ -19,9 +19,45 @@ api_base = get_api_base()
 
 
 def _format_question_text(text: str) -> str:
-    """在子问题编号前插入段落间距，改善综合题排版。"""
+    """格式化题目文本：包裹代码块、改善子问题排版。"""
     if not text:
         return text
+
+    # --- 1. 代码块检测（逐行扫描 + 花括号深度计数）---
+    code_start_re = re.compile(
+        r'^(int|float|void|unsigned|char|double|long)\s+\w+\s*\('
+    )
+    lines = text.split('\n')
+    result = []
+    in_code = False
+    brace_depth = 0
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not in_code and code_start_re.match(stripped):
+            in_code = True
+            brace_depth = stripped.count('{') - stripped.count('}')
+            result.append('\n```c')
+            result.append(line)
+            if brace_depth <= 0 and '{' in stripped:
+                result.append('```\n')
+                in_code = False
+            continue
+
+        if in_code:
+            brace_depth += stripped.count('{') - stripped.count('}')
+            result.append(line)
+            if brace_depth <= 0:
+                result.append('```\n')
+                in_code = False
+            continue
+
+        result.append(line)
+
+    text = '\n'.join(result)
+
+    # --- 2. 子问题编号前加段落分隔 ---
     text = re.sub(
         r'\n([（(][1-9]\d*[）)])',
         r'\n\n\n\1',
