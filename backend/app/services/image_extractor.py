@@ -378,14 +378,37 @@ class ImageExtractionService:
         image_info_list = page.get_image_info()  # list[dict]
         results: list[ExtractedImage] = []
 
+        # If some images have xref=0 (inline images), build a fallback
+        # mapping from page.get_images(full=True) which returns real xrefs.
+        # This is common in 王道题本 PDFs where diagrams are inline.
+        xref_fallback: dict[int, int] = {}
+        needs_fallback = any(
+            info.get("xref") in (0, None) for info in image_info_list
+        )
+        if needs_fallback:
+            for i, entry in enumerate(page.get_images(full=True)):
+                # entry[0] = xref
+                xref_fallback[i] = entry[0]
+
         for img_idx, info in enumerate(image_info_list):
-            xref: int = info.get("xref", 0)
+            xref: int = info.get("xref", 0) or 0
             width: int = info.get("width", 0)
             height: int = info.get("height", 0)
             bbox_raw = info.get("bbox", (0, 0, 0, 0))
 
             # Size filter
             if width < self.MIN_WIDTH or height < self.MIN_HEIGHT:
+                continue
+
+            # Inline image fallback: if xref is 0, try get_images()
+            if xref == 0 and img_idx in xref_fallback:
+                xref = xref_fallback[img_idx]
+
+            if xref == 0:
+                logger.debug(
+                    "Skipping inline image (no xref) page=%d idx=%d",
+                    page_idx, img_idx,
+                )
                 continue
 
             # Extract actual image bytes
