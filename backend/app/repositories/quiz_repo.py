@@ -132,3 +132,90 @@ class WeakKnowledgeRepository(BaseRepository[WeakKnowledge]):
         wk.recalculate_mastery()
         self.db.flush()
         return wk
+
+    def get_all_filtered(
+        self,
+        subject: str | None = None,
+        limit: int = 50,
+        min_wrong: int = 0,
+    ) -> list[dict]:
+        """Query weak knowledge entries with optional filters.
+
+        Returns list of dicts including subject derived from linked questions.
+        """
+        from app.models.question import Question
+
+        query = self.db.query(WeakKnowledge)
+
+        if min_wrong > 0:
+            query = query.filter(WeakKnowledge.wrong_count >= min_wrong)
+
+        entries = query.order_by(WeakKnowledge.mastery_score.asc()).limit(limit).all()
+
+        results = []
+        for wk in entries:
+            subj = None
+            if subject:
+                subj = subject
+            else:
+                # Derive subject from the most recent question with this tag
+                q = (
+                    self.db.query(Question.subject)
+                    .filter(Question.knowledge_tag.contains(wk.knowledge_tag))
+                    .first()
+                )
+                subj = q.subject if q else None
+            results.append({
+                "knowledge_tag": wk.knowledge_tag,
+                "wrong_count": wk.wrong_count,
+                "correct_count": wk.correct_count,
+                "mastery_score": wk.mastery_score,
+                "subject": subj,
+            })
+
+        if subject:
+            results = [r for r in results if r["subject"] == subject]
+
+        return results
+
+    def get_summary(self) -> dict:
+        """Get aggregated weak knowledge summary.
+
+        Returns total weak points, average mastery, and weakest 5 per subject.
+        """
+        from app.models.question import Question
+
+        entries = self.db.query(WeakKnowledge).filter(
+            WeakKnowledge.wrong_count > 0
+        ).all()
+
+        total = len(entries)
+        avg_mastery = (
+            sum(e.mastery_score for e in entries) / total if total > 0 else 0.0
+        )
+
+        # Group by subject via question join
+        subject_map: dict[str, list[dict]] = {}
+        for wk in entries:
+            q = (
+                self.db.query(Question.subject)
+                .filter(Question.knowledge_tag.contains(wk.knowledge_tag))
+                .first()
+            )
+            subj = q.subject if q else "未知"
+            subject_map.setdefault(subj, []).append({
+                "knowledge_tag": wk.knowledge_tag,
+                "wrong_count": wk.wrong_count,
+                "mastery_score": wk.mastery_score,
+            })
+
+        weakest_by_subject = {
+            subj: sorted(items, key=lambda x: x["mastery_score"])[:5]
+            for subj, items in subject_map.items()
+        }
+
+        return {
+            "total_weak_points": total,
+            "average_mastery": round(avg_mastery, 4),
+            "weakest_by_subject": weakest_by_subject,
+        }

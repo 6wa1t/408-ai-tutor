@@ -194,10 +194,10 @@ python import_pdfs.py --pdf-dir /path/to/your/pdf/folder
 408-ai-tutor/
 ├── backend/                    # FastAPI 后端
 │   ├── app/
-│   │   ├── api/               # 路由层 (6组API端点)
+│   │   ├── api/               # 路由层 (8组API端点)
 │   │   ├── core/              # 核心模块 (日志、异常)
 │   │   ├── database/          # 数据库连接与会话管理
-│   │   ├── models/            # ORM 模型 (5张表)
+│   │   ├── models/            # ORM 模型 (6张表)
 │   │   ├── repositories/      # 数据访问层
 │   │   ├── schemas/           # Pydantic 数据校验
 │   │   ├── services/          # 业务逻辑层
@@ -232,6 +232,7 @@ python import_pdfs.py --pdf-dir /path/to/your/pdf/folder
 | `misconceptions` | **知识盲区** (AI分析的错误模式和纠正建议，含 `flowus_synced` 增量同步标记) |
 | `weak_knowledge` | **薄弱知识点** (按知识点维度统计正确率，可直接供 Agent 读取分析) |
 | `wrong_questions` | **错题集** (自动收集+手动管理，支持重做追踪，是 Agent 联动的核心数据表) |
+| `conversations` | **对话历史** (AI助教的对话上下文管理，支持书签标记) |
 
 > 💡 `wrong_questions`、`misconceptions`、`weak_knowledge` 三张表是桌面 Agent 的最佳数据源，通过 MCP 连接后可实现自动化的知识盲区管理和复习提醒。
 
@@ -245,6 +246,8 @@ python import_pdfs.py --pdf-dir /path/to/your/pdf/folder
 | AI助教 | `/api/tutor` | 智能问答对话 |
 | 知识盲区 | `/api/misconceptions` | 盲区列表、统计分析 |
 | 错题集 | `/api/wrong-questions` | 错题管理、重做、批量操作 |
+| 对话管理 | `/api/conversations` | AI助教对话历史管理 |
+| 薄弱知识点 | `/api/weak-knowledge` | 知识点掌握度查询、统计分析 |
 
 完整 API 文档启动后访问 http://127.0.0.1:8000/docs
 

@@ -1,18 +1,19 @@
 """答题统计页面 — 正确率、薄弱知识点分析。"""
 
 import sys
-import os
 import pathlib
 import streamlit as st
 import requests
 
+# Streamlit pages need explicit path setup to find shared/ module
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider
+from shared.api import get_api_base
 
 st.set_page_config(page_title="答题统计", page_icon="📊", layout="wide")
 apply_theme()
 
-api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
+api_base = get_api_base()
 
 gradient_header("📊 答题统计", level=2)
 
@@ -39,7 +40,8 @@ col1.metric("答题总数", stats.get("total_attempts", 0))
 col2.metric("答对题数", stats.get("total_correct", 0))
 
 accuracy = stats.get("accuracy", 0)
-col3.metric("总正确率", f"{accuracy * 100:.1f}%")
+display_acc = accuracy if accuracy > 1.0 else accuracy * 100
+col3.metric("总正确率", f"{display_acc:.1f}%")
 
 # ─── Subject breakdown ───
 glow_divider()
@@ -54,7 +56,8 @@ if subject_stats:
     for i, ss in enumerate(subject_stats):
         with cols[i % len(cols)]:
             subj_name = ss.get('subject', '未知')
-            subj_acc = ss.get('accuracy', 0) * 100
+            subj_acc_raw = ss.get('accuracy', 0)
+            subj_acc = subj_acc_raw if subj_acc_raw > 1.0 else subj_acc_raw * 100
             subj_correct = ss.get('correct', 0)
             subj_total = ss.get('total', 0)
 

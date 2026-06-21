@@ -24,6 +24,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from app.core.logging_config import get_logger
 from app.models.misconception import Misconception
 from app.models.question import Question
+from app.repositories.quiz_repo import WeakKnowledgeRepository
 from app.services.llm_service import get_llm_service
 
 logger = get_logger("misconception_service")
@@ -75,10 +76,10 @@ class MisconceptionService:
         )
         if existing:
             existing.frequency += 1
-            self.db.commit()
             logger.info(
                 f"Updated existing misconception #{existing.id} frequency → {existing.frequency}"
             )
+            self.db.commit()
             return existing
 
         # Build options text for prompt
@@ -103,9 +104,15 @@ class MisconceptionService:
             llm = get_llm_service()
             if not llm.is_configured():
                 logger.warning("LLM not configured, creating basic misconception")
-                return self._create_basic_misconception(
+                record = self._create_basic_misconception(
                     question, user_answer, correct_answer
                 )
+                self._ensure_weak_knowledge(question)
+                self.db.commit()
+                logger.info(
+                    f"Created basic misconception #{record.id} for Q#{question.id}"
+                )
+                return record
 
             reply = self._call_llm_for_analysis(llm, prompt)
             analysis = self._parse_analysis(reply)
@@ -137,6 +144,7 @@ class MisconceptionService:
             remediation=analysis.get("remediation", ""),
         )
         self.db.add(record)
+        self._ensure_weak_knowledge(question)
         self.db.commit()
         logger.info(
             f"Created misconception #{record.id} for Q#{question.id} "
@@ -188,6 +196,31 @@ class MisconceptionService:
 
     # ── Helpers ──
 
+    def _ensure_weak_knowledge(self, question: Question) -> None:
+        """Ensure a weak_knowledge entry exists for this question.
+
+        quiz_service already calls update_stats for questions that have
+        knowledge_tags. This method handles the gap: questions WITHOUT
+        pre-set tags get a fallback tag derived from subject+chapter so
+        every wrong answer contributes to weak knowledge tracking.
+        """
+        if question.knowledge_tag:
+            # quiz_service handles this path — skip to avoid double counting
+            return
+
+        # Derive a fallback tag from subject + chapter
+        if question.chapter:
+            fallback_tag = f"{question.subject}:{question.chapter}"
+        else:
+            fallback_tag = question.subject
+
+        weak_repo = WeakKnowledgeRepository(self.db)
+        weak_repo.update_stats(fallback_tag, is_correct=False)
+        logger.debug(
+            f"Updated weak_knowledge for untagged question Q#{question.id} "
+            f"with fallback tag '{fallback_tag}'"
+        )
+
     @staticmethod
     @retry(
         stop=stop_after_attempt(2),
@@ -230,7 +263,10 @@ class MisconceptionService:
         user_answer: str,
         correct_answer: str,
     ) -> Misconception:
-        """Create a basic misconception record without AI analysis."""
+        """Create a basic misconception record without AI analysis.
+
+        Does NOT commit — caller is responsible for committing.
+        """
         record = Misconception(
             question_id=question.id,
             subject=question.subject,
@@ -242,5 +278,4 @@ class MisconceptionService:
             remediation="建议复习该章节相关知识点",
         )
         self.db.add(record)
-        self.db.commit()
         return record

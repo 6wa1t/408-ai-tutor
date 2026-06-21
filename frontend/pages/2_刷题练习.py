@@ -1,18 +1,19 @@
 """刷题练习页面 — 随机抽题/章节顺序、选择题/综合题、答题反馈。"""
 
 import sys
-import os
 import pathlib
 import streamlit as st
 import requests
 
+# Streamlit pages need explicit path setup to find shared/ module
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider
+from shared.api import get_api_base
 
 st.set_page_config(page_title="刷题练习", page_icon="✏️", layout="wide")
 apply_theme()
 
-api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
+api_base = get_api_base()
 
 gradient_header("✏️ 刷题练习", level=2)
 
@@ -165,10 +166,22 @@ else:
             with nav_col1:
                 if st.button("⬅ 上一章", disabled=(new_idx <= 0)):
                     st.session_state.quiz_chapter_idx = new_idx - 1
+                    _clean_quiz_state()
+                    ch_name = chapters[new_idx - 1]["name"]
+                    qs = _fetch_chapter_questions(subject_param, ch_name, question_type_value)
+                    if qs:
+                        st.session_state.quiz_questions = qs
+                        st.session_state.quiz_mode = "sequential"
                     st.rerun()
             with nav_col2:
                 if st.button("下一章 ➡", disabled=(new_idx >= len(chapters) - 1)):
                     st.session_state.quiz_chapter_idx = new_idx + 1
+                    _clean_quiz_state()
+                    ch_name = chapters[new_idx + 1]["name"]
+                    qs = _fetch_chapter_questions(subject_param, ch_name, question_type_value)
+                    if qs:
+                        st.session_state.quiz_questions = qs
+                        st.session_state.quiz_mode = "sequential"
                     st.rerun()
 
             # Load chapter button
@@ -274,6 +287,8 @@ else:
             )
             if text_ans:
                 st.session_state.quiz_answers[q["id"]] = text_ans
+            else:
+                st.session_state.quiz_answers.pop(q["id"], None)
 
         # Show result after submission
         if st.session_state.quiz_submitted and q["id"] in st.session_state.get("quiz_results", {}):

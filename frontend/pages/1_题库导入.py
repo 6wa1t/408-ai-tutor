@@ -1,20 +1,20 @@
 """题库导入页面 — 上传PDF或指定目录导入题目。"""
 
 import sys
-import os
 import pathlib
 import streamlit as st
 import requests
-import json
 
+# Streamlit pages need explicit path setup to find shared/ module
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider
+from shared.api import get_api_base
 
 st.set_page_config(page_title="题库导入", page_icon="📥", layout="wide")
 apply_theme()
 
 # Get API base from session state or default
-api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
+api_base = get_api_base()
 
 gradient_header("📥 题库导入", level=2)
 

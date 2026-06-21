@@ -547,6 +547,9 @@ class VLMFallbackStrategy:
         logger.info(f"VLM fallback: opening PDF {pdf_path}")
         doc = fitz.open(pdf_path)
         subject = infer_subject(pdf_path)
+        pdf_stem = pdf_path_obj.stem
+        settings = get_settings()
+        image_dir = Path(settings.image_dir)
         total_pages = len(doc)
 
         if page_range:
@@ -562,11 +565,25 @@ class VLMFallbackStrategy:
         try:
             for page_idx in range(start, end):
                 try:
-                    # Render page to image
-                    img_path = self.llm.pdf_page_to_image(pdf_path, page_idx)
+                    # ── 1. 渲染页面为高分辨率图片 ──
+                    pix = None
+                    try:
+                        page = doc[page_idx]
+                        pix = page.get_pixmap(dpi=200)
+                        page_img_path = str(
+                            image_dir / f"{pdf_stem}_page{page_idx + 1}.png"
+                        )
+                        pix.save(page_img_path)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to render page {page_idx + 1}: {e}"
+                        )
+                        continue
 
-                    # Send to VLM for extraction
-                    result = self.llm.analyze_questions_page(img_path, context)
+                    # ── 2. 发送VLM提取题目 + 配图位置 ──
+                    result = self.llm.analyze_questions_page(
+                        page_img_path, context
+                    )
 
                     # Update context from VLM response
                     page_context = result.get("context", {})
@@ -575,13 +592,55 @@ class VLMFallbackStrategy:
                     if page_context.get("section"):
                         context["section"] = page_context["section"]
 
-                    # Convert to ParsedQuestion objects
+                    # ── 3. 按VLM返回的位置裁剪配图 ──
+                    # 批处理：先收集所有需要裁剪的图片
+                    img_attachments: dict[int, list[str]] = {}
+                    for q_data in result.get("questions", []):
+                        q_num = q_data.get("number")
+                        if q_num is None:
+                            continue
+                        y_range = q_data.get("image_y_range")
+                        if (
+                            y_range
+                            and isinstance(y_range, (list, tuple))
+                            and len(y_range) >= 2
+                        ):
+                            y1_ratio = max(0.0, min(1.0, float(y_range[0])))
+                            y2_ratio = max(0.0, min(1.0, float(y_range[1])))
+                            # 过滤高度太小的误报
+                            if y2_ratio - y1_ratio > 0.02:
+                                y1 = int(y1_ratio * pix.height)
+                                y2 = int(y2_ratio * pix.height)
+                                x1 = int(0.05 * pix.width)
+                                x2 = int(0.95 * pix.width)
+                                clip_rect = fitz.Rect(x1, y1, x2, y2)
+                                img_pix = fitz.Pixmap(pix, clip_rect)
+
+                                img_filename = (
+                                    f"{pdf_stem}_p{page_idx:03d}"
+                                    f"_q{q_num:03d}_vlm.png"
+                                )
+                                rel_path = str(
+                                    Path("questions") / subject / img_filename
+                                )
+                                abs_path = image_dir / rel_path
+                                abs_path.parent.mkdir(parents=True, exist_ok=True)
+                                img_pix.save(str(abs_path))
+                                img_attachments.setdefault(q_num, []).append(rel_path)
+
+                    # ── 4. 构建ParsedQuestion对象 ──
                     for q_data in result.get("questions", []):
                         q = self._build_parsed_question(
-                            q_data, context, page_idx, subject
+                            q_data, context, page_idx, subject, img_attachments
                         )
                         if q and q.question_text.strip():
                             questions.append(q)
+
+                    # Clean up rendered full-page image
+                    try:
+                        Path(page_img_path).unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
                     # Progress logging
                     if (page_idx - start + 1) % 5 == 0 or page_idx == end - 1:
@@ -605,6 +664,11 @@ class VLMFallbackStrategy:
             f"{end - start} pages of {pdf_path_obj.name} "
             f"(subject={subject})"
         )
+        img_count = sum(1 for q in questions if q.image_paths)
+        if img_count:
+            logger.info(
+                f"VLM cropped diagram images for {img_count} questions"
+            )
         return questions
 
     @staticmethod
@@ -613,14 +677,28 @@ class VLMFallbackStrategy:
         context: dict[str, str],
         page_idx: int,
         subject: str,
+        img_attachments: dict[int, list[str]] | None = None,
     ) -> ParsedQuestion | None:
-        """Convert a VLM response dict into a ParsedQuestion."""
+        """Convert a VLM response dict into a ParsedQuestion.
+
+        Args:
+            q_data: Question data from VLM response.
+            context: Chapter/section context from VLM.
+            page_idx: 0-indexed page number.
+            subject: Inferred subject name.
+            img_attachments: Dict mapping question_number → [rel_path, ...]
+                             of cropped diagram images from this page.
+
+        Returns:
+            ParsedQuestion or None if question text is empty.
+        """
         text = str(q_data.get("text", "")).strip()
         if not text:
             return None
 
+        q_num = q_data.get("number")
         q = ParsedQuestion(
-            question_number=q_data.get("number"),
+            question_number=q_num,
             question_text=text,
             page_number=page_idx,
         )
@@ -657,6 +735,12 @@ class VLMFallbackStrategy:
             tags.append(q.exam_year)
         q.knowledge_tag = tags
 
+        # Attach cropped diagram images
+        if img_attachments and q_num is not None:
+            paths = img_attachments.get(q_num)
+            if paths:
+                q.image_paths = paths
+
         return q
 
 
@@ -667,12 +751,19 @@ class VLMFallbackStrategy:
 class PDFParser:
     """Facade that auto-selects the best parsing strategy.
 
-    Default flow:
-    1. Try PyMuPDFStrategy (fast, text-based)
-    2. If 0 questions found → auto-fallback to VLMFallbackStrategy (vision-based)
+    Auto-detection flow:
+    1. Quick scan: check if PDF is scanned (pages have little/no text)
+       → Scanned: directly use VLMFallbackStrategy (vision-based)
+    2. Not scanned: use PyMuPDFStrategy (fast, text-based)
+    3. If PyMuPDF finds 0 questions → fallback to VLM
 
-    Set force_vlm=True to skip text extraction and go directly to VLM.
+    Set force_vlm=True to skip detection and go directly to VLM.
     """
+
+    # Scanned PDF detection: if >_SCAN_THRESHOLD of pages have
+    # fewer than _MIN_TEXT_CHARS characters, treat as scanned.
+    _SCAN_THRESHOLD = 0.5   # 50%+ pages
+    _MIN_TEXT_CHARS = 30    # fewer than 30 chars = "blank page"
 
     def __init__(
         self,
@@ -692,8 +783,53 @@ class PDFParser:
         """True if the last parse() call used VLM fallback."""
         return self._used_vlm
 
+    # ── 扫描PDF快速检测 ────────────────────────
+
+    @staticmethod
+    def _quick_scanned_check(pdf_path: str) -> bool:
+        """快速检测PDF是否为扫描版（图片型）。
+
+        打开PDF，逐页提取文本。如果大多数页面文本极少，
+        说明是扫描版PDF，需要走VLM路线。
+        """
+        try:
+            doc = fitz.open(pdf_path)
+        except Exception:
+            return False
+
+        try:
+            total_pages = len(doc)
+            if total_pages == 0:
+                return False
+
+            blank_count = 0
+            for page in doc:
+                text = page.get_text("text").strip()
+                if len(text) < PDFParser._MIN_TEXT_CHARS:
+                    blank_count += 1
+
+            ratio = blank_count / total_pages
+            logger.info(
+                f"Scanned PDF check: {pdf_path} → "
+                f"{blank_count}/{total_pages} pages near-empty "
+                f"({ratio:.0%}), threshold={PDFParser._SCAN_THRESHOLD:.0%}"
+            )
+            return ratio >= PDFParser._SCAN_THRESHOLD
+
+        finally:
+            doc.close()
+
+    # ── 主解析入口 ─────────────────────────────
+
     def parse(self, pdf_path: str) -> list[ParsedQuestion]:
-        """Parse a PDF file with auto-fallback from text to vision.
+        """Parse a PDF file with auto-detect and fallback.
+
+        Detection flow:
+        - If force_vlm → VLM directly
+        - If explicit strategy → use it directly
+        - If quick scan detects scanned PDF → VLM
+        - Otherwise → PyMuPDF text extraction
+        - If PyMuPDF returns 0 questions → VLM fallback
 
         Args:
             pdf_path: Path to the PDF file.
@@ -703,30 +839,40 @@ class PDFParser:
         """
         self._used_vlm = False
 
-        # Force VLM mode
+        # ── 1. 强制VLM模式 ──
         if self._force_vlm:
             logger.info(f"Force VLM mode for: {pdf_path}")
             vlm = VLMFallbackStrategy()
             self._used_vlm = True
             return vlm.parse(pdf_path)
 
-        # Explicit strategy provided — use it directly
+        # ── 2. 显式指定策略 ──
         if self._explicit_strategy is not None:
             logger.info(
                 f"Parsing PDF with {type(self._explicit_strategy).__name__}: {pdf_path}"
             )
             return self._explicit_strategy.parse(pdf_path)
 
-        # Auto-select: try PyMuPDF first
+        # ── 3. 扫描PDF检测 ──
+        if self._quick_scanned_check(pdf_path):
+            logger.info(
+                f"Detected scanned PDF: {pdf_path}. "
+                f"Routing to VLM vision-based extraction."
+            )
+            vlm = VLMFallbackStrategy()
+            self._used_vlm = True
+            return vlm.parse(pdf_path)
+
+        # ── 4. 文字型PDF：PyMuPDF提取 ──
         text_strategy = PyMuPDFStrategy()
-        logger.info(f"Parsing PDF with PyMuPDFStrategy: {pdf_path}")
+        logger.info(f"Parsing text PDF with PyMuPDFStrategy: {pdf_path}")
         results = text_strategy.parse(pdf_path)
 
         if results:
             logger.info(f"PyMuPDF extracted {len(results)} questions")
             return results
 
-        # PyMuPDF found nothing — auto-fallback to VLM
+        # ── 5. PyMuPDF未找到任何题目 → VLM降级 ──
         logger.warning(
             f"PyMuPDF extracted 0 questions from {pdf_path}. "
             f"Auto-fallback to VLM (vision-based extraction). "

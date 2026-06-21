@@ -4,19 +4,19 @@ Features conversation history persistence via backend API.
 """
 
 import sys
-import os
 import pathlib
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 
+# Streamlit pages need explicit path setup to find shared/ module
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider, status_badge
+from shared.api import get_api_base
 
 st.set_page_config(page_title="AI助教", page_icon="🤖", layout="wide")
 apply_theme()
 
-api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
+api_base = get_api_base()
 
 # 保留最近20条对话（10轮），防止超出LLM上下文窗口
 MAX_HISTORY = 20
@@ -59,7 +59,7 @@ def send_chat(message: str, history: list, question_id: int | None = None):
             timeout=60,
         )
         if resp.status_code == 200:
-            return resp.json()["reply"]
+            return resp.json().get("reply", "抱歉，AI 返回了意外的响应格式。")
         else:
             return f"❌ API错误 ({resp.status_code}): {resp.json().get('detail', '未知错误')}"
     except requests.ConnectionError:
@@ -496,6 +496,14 @@ def process_user_message(user_msg: str):
                 user_msg,
                 st.session_state.chat_history[-(MAX_HISTORY + 1):-1],
             )
+
+    # BUG FIX: Don't persist error messages as conversation history
+    if isinstance(reply, str) and reply.startswith("❌"):
+        st.error(reply)
+        return
+
+    # Display successful reply in chat bubble and persist
+    with st.chat_message("assistant", avatar="🤖"):
         st.markdown(reply)
 
     st.session_state.chat_history.append({"role": "assistant", "content": reply})

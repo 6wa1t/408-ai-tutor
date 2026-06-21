@@ -52,6 +52,7 @@ def _validate_directory_path(directory: str) -> Path:
 async def upload_and_import_pdf(
     file: UploadFile = File(..., description="PDF题库文件"),
     force_vlm: bool = Form(False, description="强制使用视觉大模型(VLM)提取，跳过文本提取"),
+    auto_process: bool = Form(True, description="导入后自动提取配图并修复PUA乱码"),
     db: Session = Depends(get_db),
 ):
     """Upload a single PDF file and import its questions.
@@ -61,11 +62,12 @@ async def upload_and_import_pdf(
 
     Set force_vlm=True to skip text extraction and use VLM directly
     (useful for known-scanned/image-based PDFs).
+    Set auto_process=False to skip post-import image extraction and PUA repair.
     """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
 
-    logger.info(f"Received upload: {file.filename} (force_vlm={force_vlm})")
+    logger.info(f"Received upload: {file.filename} (force_vlm={force_vlm}, auto_process={auto_process})")
 
     # Save to temp file
     tmp_dir = tempfile.mkdtemp()
@@ -74,7 +76,7 @@ async def upload_and_import_pdf(
         with open(tmp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        service = ImportService(db, force_vlm=force_vlm)
+        service = ImportService(db, force_vlm=force_vlm, auto_process=auto_process)
         result = service.import_pdf(str(tmp_path))
 
         return ImportReportResponse(
@@ -101,6 +103,7 @@ async def upload_and_import_pdf(
 async def import_directory(
     directory: str = Form(..., description="PDF题库目录路径"),
     force_vlm: bool = Form(False, description="强制使用视觉大模型(VLM)提取"),
+    auto_process: bool = Form(True, description="导入后自动提取配图并修复PUA乱码"),
     db: Session = Depends(get_db),
 ):
     """Import all PDF files from a specified directory.
@@ -111,10 +114,10 @@ async def import_directory(
     # Validate path to prevent directory traversal
     _validate_directory_path(directory)
 
-    logger.info(f"Directory import request: {directory} (force_vlm={force_vlm})")
+    logger.info(f"Directory import request: {directory} (force_vlm={force_vlm}, auto_process={auto_process})")
 
     try:
-        service = ImportService(db, force_vlm=force_vlm)
+        service = ImportService(db, force_vlm=force_vlm, auto_process=auto_process)
         report = service.import_directory(directory)
         return report
     except Exception as e:

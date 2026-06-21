@@ -7,8 +7,10 @@ This is the business logic layer that coordinates:
 4. Deduplication
 5. Database storage
 6. Import report generation
+7. Post-processing: image extraction + PUA garbled text repair
 """
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -20,18 +22,80 @@ from app.core.logging_config import get_logger
 from app.models.question import Question
 from app.repositories.question_repo import QuestionRepository
 from app.schemas.import_report import PDFImportResult, ImportReportResponse
+from app.services.image_extractor import ImageExtractionService
 from app.services.pdf_parser import PDFParser, infer_subject
 
 logger = get_logger("import_service")
+
+# ── PUA字符修复映射表 ──────────────────────────
+# PDF使用PMExtra自定义字体编码数学符号，存储在Unicode私用区(PUA U+F0xx)
+# 此映射表将其替换为标准Unicode，无需依赖外部字体
+
+_PUA_PAIRED_REPLACEMENTS = [
+    ('\uf0ee', '(', ')'),         # 圆括号: O(n²)
+    ('\uf0f6', '[', ']'),         # 方括号: A[0..n]
+    ('\uf0f4', '|', '|'),         # 绝对值: |V| > |E|
+    ('\uf0f7', '\u230a', '\u230b'),  # 下取整: ⌊x⌋
+    ('\uf0f8', '\u2308', '\u2309'),  # 上取整: ⌈x⌉
+]
+
+_PUA_SINGLE_REPLACEMENTS = {
+    '\uf0e0': '',                 # ⟨ 冗余左尖括号
+    '\uf0e1': '',                 # 分隔符（冗余）
+    '\uf0e2': '',                 # ⟩ 冗余右尖括号
+    '\uf00a': "'",                # ′ 上标/撇号
+    '\uf0e8': '\u23a7',           # ⎧ 左花括号上段
+    '\uf0e9': '\u23ab',           # ⎫ 右花括号上段
+    '\uf0ea': '\u23aa',           # ⎪ 花括号延伸
+    '\uf0e3': '\u23a7',           # ⎧ 分段函数左括号
+    '\uf0e4': '\u222a',           # ∪ 并集
+    '\uf0b1': '\u2211',           # ∑ 求和符号
+    '\uf0dc': '\u0305',           # ̅ 组合上划线(布尔补)
+    '\uf0fb': '\u23df',           # ⏟ 下花括号
+    '\uf0fc': '\u23df',
+    '\uf0fd': '\u23df',
+}
+
+_PUA_RE = re.compile(r'[\ue000-\uf8ff]')
+_PUA_TEXT_FIELDS = ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'analysis']
+
+
+def _has_pua(text: str) -> bool:
+    return bool(text and _PUA_RE.search(text))
+
+
+def _repair_pua_text(text: str) -> str:
+    """将PUA字符替换为标准Unicode等价符号。"""
+    if not text:
+        return text
+    # 配对括号修复: 先匹配成对出现的pua+pua(中间有空白)
+    for pua_ch, open_ch, close_ch in _PUA_PAIRED_REPLACEMENTS:
+        pattern = re.escape(pua_ch) + r'\s+' + re.escape(pua_ch)
+        text = re.sub(pattern, open_ch + close_ch, text)
+        text = text.replace(pua_ch, open_ch)
+    # 单字符替换
+    for pua_ch, replacement in _PUA_SINGLE_REPLACEMENTS.items():
+        text = text.replace(pua_ch, replacement)
+    return text
 
 
 class ImportService:
     """Service for importing PDF question banks into the database."""
 
-    def __init__(self, db: Session, parser: PDFParser | None = None, force_vlm: bool = False):
+    def __init__(self, db: Session, parser: PDFParser | None = None,
+                 force_vlm: bool = False, auto_process: bool = True):
+        """
+        Args:
+            db: Database session.
+            parser: Optional custom parser.
+            force_vlm: Force VLM vision model for PDF extraction.
+            auto_process: If True, automatically extract images and repair
+                PUA garbled text after each PDF import.
+        """
         self.db = db
         self.repo = QuestionRepository(db)
         self.parser = parser or PDFParser(force_vlm=force_vlm)
+        self.auto_process = auto_process
 
     def scan_directory(self, directory: str) -> list[str]:
         """Scan a directory for PDF files.
@@ -136,7 +200,60 @@ class ImportService:
             f"{result.success_count} new, {result.skipped_count} skipped, "
             f"{result.error_count} errors"
         )
+
+        # ── 自动后处理：提取图片 + 修复PUA ──
+        if self.auto_process and result.success_count > 0:
+            self._post_process(pdf_path, filename, result)
+
         return result
+
+    # ── 后处理 ──────────────────────────────────
+
+    def _post_process(self, pdf_path: str, filename: str, result: PDFImportResult) -> None:
+        """导入后自动处理：提取图片 + 修复PUA乱码。
+
+        在 import_pdf 提交入库后自动调用，不会阻断导入流程。
+        """
+        # ── 1. 提取配图 ──
+        try:
+            extractor = ImageExtractionService(self.db)
+            imgs, updated = extractor.extract_from_pdf(pdf_path, dry_run=False)
+            if imgs > 0:
+                logger.info(
+                    f"[后处理] {filename}: 提取 {imgs} 张图片，关联 {updated} 道题"
+                )
+        except Exception as e:
+            logger.warning(f"[后处理] {filename} 图片提取失败 (可忽略): {e}")
+
+        # ── 2. 修复PUA乱码 ──
+        try:
+            # 查找刚导入的题目中哪些含PUA字符
+            imported = (
+                self.db.query(Question)
+                .filter(Question.source_pdf == filename)
+                .all()
+            )
+            pua_fixed = 0
+            for q in imported:
+                has_any = False
+                updates = {}
+                for f in _PUA_TEXT_FIELDS:
+                    val = getattr(q, f, None) or ""
+                    if _has_pua(val):
+                        has_any = True
+                        updates[f] = _repair_pua_text(val)
+                if has_any:
+                    for f, repaired in updates.items():
+                        setattr(q, f, repaired)
+                    pua_fixed += 1
+
+            if pua_fixed > 0:
+                self.db.flush()
+                logger.info(
+                    f"[后处理] {filename}: 修复 {pua_fixed} 道题的PUA乱码"
+                )
+        except Exception as e:
+            logger.warning(f"[后处理] {filename} PUA修复失败 (可忽略): {e}")
 
     def import_directory(self, directory: str | None = None) -> ImportReportResponse:
         """Import all PDFs from a directory.

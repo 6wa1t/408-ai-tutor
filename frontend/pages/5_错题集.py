@@ -1,18 +1,19 @@
 """错题集页面 — 查看、管理、重做错题。"""
 
 import sys
-import os
 import pathlib
 import streamlit as st
 import requests
 
+# Streamlit pages need explicit path setup to find shared/ module
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider
+from shared.api import get_api_base
 
 st.set_page_config(page_title="错题集", page_icon="📕", layout="wide")
 apply_theme()
 
-api_base = st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
+api_base = get_api_base()
 
 gradient_header("📕 错题集", level=2)
 

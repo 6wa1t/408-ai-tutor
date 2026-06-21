@@ -57,8 +57,33 @@ time.sleep(3)
 webbrowser.open("http://127.0.0.1:8501")
 
 try:
-    backend.wait()
+    while True:
+        # Check if either process has exited
+        backend_ret = backend.poll()
+        frontend_ret = frontend.poll()
+
+        if backend_ret is not None:
+            print(f"\n⚠️ 后端已退出 (code={backend_ret})，正在关闭前端...")
+            frontend.terminate()
+            frontend.wait(timeout=5)
+            break
+        if frontend_ret is not None:
+            print(f"\n⚠️ 前端已退出 (code={frontend_ret})，正在关闭后端...")
+            backend.terminate()
+            backend.wait(timeout=5)
+            break
+
+        time.sleep(1)
 except KeyboardInterrupt:
     print("\n正在关闭...")
     backend.terminate()
     frontend.terminate()
+    # Wait for both to clean up
+    try:
+        backend.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        backend.kill()
+    try:
+        frontend.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        frontend.kill()
