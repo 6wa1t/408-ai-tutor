@@ -8,19 +8,19 @@
 
 ---
 
-## Latest Release: v0.2.3
+## 最新版本：v0.2.3
 
-This release focuses on high-accuracy local question-bank extraction and robust practice-page rendering.
+本次发布聚焦于高精度本地题库提取与刷题页面渲染加固。
 
-- Adds a MinerU high-accuracy scanned-PDF workflow for local extraction with GPU-oriented settings.
-- Adds `scripts/qc_question_bank.py` for repeatable post-import QC reports in Markdown, CSV, and JSON.
-- Adds `tools/bank_builder/` — a local question-bank package builder that converts MinerU Markdown output into self-contained, importable `bank.db` packages with metadata, checksums, and QC reports.
-- Adds Agent Notes Export system (`/api/agent-exports` API + `scripts/export_agent_notes.py` CLI) for generating Markdown/JSON snapshots of wrong questions, weak points, and misconceptions for desktop Agent consumption.
-- Hardens practice rendering for imported MinerU content: images, `<details>` blocks, Mermaid/text_image helpers, HTML tables, LaTeX arrays, table-cell LaTeX, and broken code fences.
-- Excludes incomplete choice questions missing A/B/C/D from normal choice practice while preserving the raw records for QC and manual repair.
-- Current imported Wangdao runtime bank contains `2876` questions and `195` indexed question assets. Answers are intentionally left for the DeepSeek answer-candidate workflow.
+- 新增 MinerU 高精度扫描 PDF 本地提取工作流，支持 GPU 加速设置。
+- 新增 `scripts/qc_question_bank.py`，可在导入后生成可复现的 QC 报告（Markdown / CSV / JSON 三种格式）。
+- 新增 `tools/bank_builder/` 本地题库包构建器，将 MinerU Markdown 输出转换为自包含、可导入的 `bank.db` 题库包，含元数据、校验和与 QC 报告。
+- 新增 Agent 笔记导出系统（`/api/agent-exports` API + `scripts/export_agent_notes.py` 命令行工具），可生成错题、薄弱知识点、误区分析的 Markdown/JSON 快照，供桌面 Agent 消费。
+- 加固导入 MinerU 内容的刷题渲染：图片、`<details>` 块、Mermaid/text_image 辅助描述、HTML 表格、LaTeX 数组、表格内 LaTeX、损坏的代码围栏。
+- 缺少 A/B/C/D 选项的不完整选择题从正常刷题中排除，但原始记录保留在数据库和 QC 报告中供手动修复。
+- 当前导入的王道运行时题库包含 `2876` 道题目和 `195` 个索引题目资产。答案有意留空，待 DeepSeek 答案候选工作流生成。
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for details.
+详见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 
 ---
 
