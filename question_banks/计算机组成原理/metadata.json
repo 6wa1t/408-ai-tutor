@@ -1,0 +1,13 @@
+{
+  "id": "计算机组成原理",
+  "name": "王道计算机组成原理",
+  "subject": "计算机组成原理",
+  "count": 677,
+  "question_count": 677,
+  "version": "1.0.0",
+  "description": "从本地数据库导出的计算机组成原理题库",
+  "has_media": true,
+  "has_partial_answers": false,
+  "qc_status": "passed_with_warnings",
+  "exported_at": "2026-06-25T12:46:57.872685"
+}
