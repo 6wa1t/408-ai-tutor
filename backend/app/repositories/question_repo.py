@@ -1,4 +1,4 @@
-"""Question Repository — specialized queries for Question model."""
+﻿"""Question Repository 鈥?specialized queries for Question model."""
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -14,6 +14,24 @@ class QuestionRepository(BaseRepository[Question]):
 
     def __init__(self, db: Session):
         super().__init__(db)
+
+    def _complete_choice_filter(self, query):
+        """Require all four options for practice-ready choice questions."""
+        for column in (
+            Question.option_a,
+            Question.option_b,
+            Question.option_c,
+            Question.option_d,
+        ):
+            query = query.filter(column.isnot(None)).filter(func.trim(column) != "")
+        return query
+
+    def _apply_question_type_filter(self, query, question_type: str | None):
+        if question_type:
+            query = query.filter(Question.question_type == question_type)
+        if question_type == "choice":
+            query = self._complete_choice_filter(query)
+        return query
 
     def get_by_subject(
         self,
@@ -58,8 +76,7 @@ class QuestionRepository(BaseRepository[Question]):
         query = self.db.query(Question)
         if subject:
             query = query.filter(Question.subject == subject)
-        if question_type:
-            query = query.filter(Question.question_type == question_type)
+        query = self._apply_question_type_filter(query, question_type)
         return query.order_by(func.random()).limit(count).all()
 
     def get_chapters_by_subject(
@@ -75,8 +92,7 @@ class QuestionRepository(BaseRepository[Question]):
             self.db.query(Question.chapter, func.count(Question.id))
             .filter(Question.subject == subject)
         )
-        if question_type:
-            query = query.filter(Question.question_type == question_type)
+        query = self._apply_question_type_filter(query, question_type)
         return (
             query.filter(Question.chapter.isnot(None))
             .group_by(Question.chapter)
@@ -96,8 +112,7 @@ class QuestionRepository(BaseRepository[Question]):
             .filter(Question.subject == subject)
             .filter(Question.chapter == chapter)
         )
-        if question_type:
-            query = query.filter(Question.question_type == question_type)
+        query = self._apply_question_type_filter(query, question_type)
         return query.order_by(Question.id).all()
 
     def check_duplicate(self, text_hash: str) -> Question | None:
@@ -152,3 +167,4 @@ class QuestionRepository(BaseRepository[Question]):
         if knowledge_tag:
             query = query.filter(Question.knowledge_tag.contains(knowledge_tag))
         return query.count()
+

@@ -26,8 +26,11 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     """Enable WAL mode and foreign keys for SQLite."""
     if "sqlite" in settings.database_url:
         cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
+        try:
+            cursor.execute("PRAGMA journal_mode=DELETE")
+            cursor.execute("PRAGMA foreign_keys=ON")
+        except Exception:
+            pass  # Ignore PRAGMA errors during startup
         cursor.close()
 
 

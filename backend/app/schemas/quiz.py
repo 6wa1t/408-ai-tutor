@@ -27,6 +27,9 @@ class QuizResult(BaseModel):
     analysis: str | None = None
     knowledge_tag: str | None = None
     answer_ref: str | None = None
+    answer_source: str | None = None
+    answer_confidence: float | None = None
+    usable_for_grading: bool | None = None
     misconception_synced: bool = Field(
         True,
         description="误区分析是否成功记录。False 表示辅助任务失败（不影响判分与统计），"

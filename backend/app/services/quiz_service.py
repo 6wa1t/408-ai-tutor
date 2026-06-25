@@ -7,11 +7,15 @@ Handles:
 - Weak knowledge tracking
 """
 
+import json
+
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.core.exceptions import QuestionNotFoundError
 from app.core.logging_config import get_logger
 from app.models.question import Question
+from app.repositories.answer_candidate_repo import AnswerCandidateRepository
 from app.repositories.question_repo import QuestionRepository
 from app.repositories.quiz_repo import QuizRepository, WeakKnowledgeRepository
 from app.schemas.quiz import (
@@ -33,6 +37,7 @@ class QuizService:
         self.question_repo = QuestionRepository(db)
         self.quiz_repo = QuizRepository(db)
         self.weak_repo = WeakKnowledgeRepository(db)
+        self.answer_candidate_repo = AnswerCandidateRepository(db)
 
     def get_random_questions(
         self,
@@ -100,10 +105,22 @@ class QuizService:
         correct_answer = (question.answer or "").strip()
         analysis = question.analysis or ""
         is_choice = self._is_choice_question(question)
+        answer_source = None
+        answer_confidence = None
+        usable_for_grading = False
 
         # Only choice questions are auto-gradable
-        if is_choice and not correct_answer:
-            correct_answer, analysis = self._fetch_ai_answer(question, analysis)
+        if is_choice and correct_answer:
+            answer_source = "built_in"
+            answer_confidence = 1.0
+            usable_for_grading = True
+        elif is_choice:
+            resolved = self._resolve_choice_answer_candidate(question, analysis)
+            correct_answer = resolved["answer"]
+            analysis = resolved["analysis"]
+            answer_source = resolved["source"]
+            answer_confidence = resolved["confidence"]
+            usable_for_grading = resolved["usable_for_grading"]
         elif not is_choice and not analysis:
             # 综合题无客观答案，不判分；但若库中尚无解析，调 AI 生成参考答案供用户对照
             analysis = self._fetch_essay_reference(question)
@@ -111,7 +128,7 @@ class QuizService:
         # Determine grading outcome
         graded = False
         is_correct = False
-        if is_choice and correct_answer:
+        if is_choice and correct_answer and usable_for_grading:
             graded = True
             is_correct = user_answer.strip().upper() == correct_answer.upper()
 
@@ -180,6 +197,9 @@ class QuizService:
             analysis=analysis or None,
             knowledge_tag=question.knowledge_tag,
             answer_ref=question.answer_ref or None,
+            answer_source=answer_source,
+            answer_confidence=answer_confidence,
+            usable_for_grading=usable_for_grading,
             misconception_synced=misconception_synced,
             wrong_question_synced=wrong_question_synced,
         )
@@ -195,61 +215,146 @@ class QuizService:
                  or question.option_c or question.option_d)
         )
 
-    def _fetch_ai_answer(
+    def _resolve_choice_answer_candidate(
         self,
         question: Question,
         existing_analysis: str,
-    ) -> tuple[str, str]:
-        """Ask DeepSeek to solve a choice question with no DB answer.
+    ) -> dict:
+        """Resolve a missing choice answer through verified or DeepSeek candidates."""
+        verified = self.answer_candidate_repo.get_best_verified(question.id)
+        if verified is not None:
+            answer = self._normalize_candidate_answer(verified.answer_text)
+            if answer:
+                logger.info(
+                    f"Using verified answer candidate for Q#{question.id}: "
+                    f"source={verified.source}, confidence={verified.confidence}"
+                )
+                return {
+                    "answer": answer,
+                    "analysis": existing_analysis or (verified.explanation or ""),
+                    "source": verified.source,
+                    "confidence": verified.confidence,
+                    "usable_for_grading": True,
+                }
+            logger.warning(
+                f"Verified answer candidate for Q#{question.id} is invalid: "
+                f"{verified.answer_text!r}"
+            )
 
-        On success the answer (and analysis if missing) are written back to the
-        database for future attempts. Returns (answer, analysis).
-
-        On any failure returns ("", existing_analysis) so the caller leaves the
-        submission ungraded rather than treating it as wrong.
-        """
         logger.info(f"Q#{question.id} has no answer, requesting AI solution...")
         try:
             llm = get_llm_service()
             if not llm.is_configured():
                 logger.warning("LLM not configured, cannot generate answer")
-                return "", existing_analysis
+                return {
+                    "answer": "",
+                    "analysis": existing_analysis,
+                    "source": None,
+                    "confidence": None,
+                    "usable_for_grading": False,
+                }
 
             options = {}
-            for letter, attr in [("A", "option_a"), ("B", "option_b"),
-                                 ("C", "option_c"), ("D", "option_d")]:
+            for letter, attr in [
+                ("A", "option_a"),
+                ("B", "option_b"),
+                ("C", "option_c"),
+                ("D", "option_d"),
+            ]:
                 val = getattr(question, attr, None)
                 if val:
                     options[letter] = val
 
-            result = llm.answer_question(
+            result = llm.answer_question_with_confidence(
                 question.question_text,
                 options=options or None,
                 subject=question.subject,
             )
 
-            ai_answer = (result.get("answer", "") or "").strip().upper()
-            ai_analysis = result.get("analysis", "") or ""
+            answer = self._normalize_candidate_answer(result.get("answer"))
+            confidence = self._clamp_confidence(result.get("confidence"))
+            llm_usable = self._coerce_bool(result.get("usable_for_grading"))
+            threshold = get_settings().answer_confidence_threshold
+            usable_for_grading = bool(
+                answer and llm_usable and confidence >= threshold
+            )
+            analysis = str(
+                result.get("analysis_md") or result.get("analysis") or ""
+            ).strip()
+            key_points = result.get("key_points") or []
+            uncertainty_reason = str(
+                result.get("uncertainty_reason") or ""
+            ).strip()
 
-            if ai_answer not in ("A", "B", "C", "D"):
+            raw_payload = {
+                "model": getattr(llm, "model", None),
+                "answer": answer,
+                "confidence": confidence,
+                "usable_for_grading": usable_for_grading,
+                "llm_usable_for_grading": llm_usable,
+                "key_points": key_points,
+                "uncertainty_reason": uncertainty_reason,
+            }
+            self.answer_candidate_repo.create_candidate(
+                question_id=question.id,
+                source="deepseek",
+                answer_text=answer,
+                explanation=analysis or None,
+                confidence=confidence,
+                is_verified=usable_for_grading,
+                raw_payload=json.dumps(
+                    raw_payload,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            )
+
+            if not answer:
                 logger.warning(
-                    f"AI returned invalid answer for Q#{question.id}: {ai_answer!r}; "
+                    f"AI returned invalid answer for Q#{question.id}; "
                     f"leaving ungraded"
                 )
-                return "", existing_analysis
 
-            # Persist for future use
-            question.answer = ai_answer
-            if ai_analysis and not existing_analysis:
-                question.analysis = ai_analysis
-            self.db.commit()
-
-            logger.info(f"AI answered Q#{question.id}: {ai_answer}")
-            return ai_answer, existing_analysis or ai_analysis
+            logger.info(
+                f"AI candidate for Q#{question.id}: answer={answer or '<invalid>'}, "
+                f"confidence={confidence}, usable={usable_for_grading}"
+            )
+            return {
+                "answer": answer,
+                "analysis": existing_analysis or analysis,
+                "source": "deepseek",
+                "confidence": confidence,
+                "usable_for_grading": usable_for_grading,
+            }
 
         except Exception as e:
             logger.error(f"AI answer generation failed for Q#{question.id}: {e}")
-            return "", existing_analysis
+            return {
+                "answer": "",
+                "analysis": existing_analysis,
+                "source": None,
+                "confidence": None,
+                "usable_for_grading": False,
+            }
+
+    @staticmethod
+    def _normalize_candidate_answer(answer: object) -> str:
+        normalized = str(answer or "").strip().upper()
+        return normalized if normalized in {"A", "B", "C", "D", "E"} else ""
+
+    @staticmethod
+    def _clamp_confidence(confidence: object) -> float:
+        try:
+            value = float(confidence or 0.0)
+        except (TypeError, ValueError):
+            value = 0.0
+        return max(0.0, min(1.0, value))
+
+    @staticmethod
+    def _coerce_bool(value: object) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes"}
+        return bool(value)
 
     def _fetch_essay_reference(self, question: Question) -> str:
         """Generate a reference answer for a 综合题 (non-choice question).

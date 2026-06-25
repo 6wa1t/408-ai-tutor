@@ -30,6 +30,26 @@ from app.services.llm_service import get_llm_service
 logger = get_logger("misconception_service")
 
 
+def _json_dumps(value) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _as_string_list(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _knowledge_tag_for(question: Question) -> str:
+    if question.knowledge_tag:
+        return question.knowledge_tag
+    if question.chapter:
+        return f"{question.subject}:{question.chapter}"
+    return question.subject
+
+
 MISCONCEPTION_PROMPT = """你是408考研错题分析专家。请分析以下学生的错题，找出其思维误区。
 
 题目信息：
@@ -50,6 +70,30 @@ MISCONCEPTION_PROMPT = """你是408考研错题分析专家。请分析以下学
 }}
 
 只返回JSON，不要有其他内容。"""
+
+
+MISCONCEPTION_PROMPT = """你是 408 考研错题分析专家。请分析学生的错误答案，并只返回 JSON。
+
+题目信息：
+科目：{subject}
+章节：{chapter}
+题目：{question_text}
+选项：
+{options}
+
+学生答案：{user_answer}（错误）
+正确答案：{correct_answer}
+
+JSON 字段必须包含：
+{{
+  "error_cause": "学生选错的直接原因",
+  "confused_concepts": ["容易混淆的概念"],
+  "correct_reasoning_path": "正确推理路径",
+  "knowledge_gap": "需要补强的知识缺口",
+  "recommended_actions": ["可执行的复习动作"],
+  "confidence": 0.0
+}}
+"""
 
 
 class MisconceptionService:
@@ -115,22 +159,20 @@ class MisconceptionService:
                 return record
 
             reply = self._call_llm_for_analysis(llm, prompt)
-            analysis = self._parse_analysis(reply)
+            analysis = self._parse_structured_analysis(
+                reply, model=getattr(llm, "model", None)
+            )
 
         except (APIError, RateLimitError, APIConnectionError) as e:
             logger.error(f"AI misconception analysis failed after retries: {e}")
-            analysis = {
-                "misconception_summary": "",
-                "knowledge_gap": "",
-                "remediation": "",
-            }
+            return self._create_fallback_after_error(
+                question, user_answer, correct_answer
+            )
         except Exception as e:
             logger.error(f"AI misconception analysis unexpected error: {e}")
-            analysis = {
-                "misconception_summary": "",
-                "knowledge_gap": "",
-                "remediation": "",
-            }
+            return self._create_fallback_after_error(
+                question, user_answer, correct_answer
+            )
 
         # Create record
         record = Misconception(
@@ -141,7 +183,20 @@ class MisconceptionService:
             correct_answer=correct_answer,
             misconception_summary=analysis.get("misconception_summary", ""),
             knowledge_gap=analysis.get("knowledge_gap", ""),
-            remediation=analysis.get("remediation", ""),
+            remediation=(
+                "；".join(analysis.get("recommended_actions", []))
+                or analysis.get("remediation", "")
+            ),
+            error_cause=analysis.get("error_cause", ""),
+            confused_concepts_json=_json_dumps(analysis.get("confused_concepts", [])),
+            correct_reasoning_path=analysis.get("correct_reasoning_path", ""),
+            recommended_actions_json=_json_dumps(
+                analysis.get("recommended_actions", [])
+            ),
+            related_knowledge_tag=_knowledge_tag_for(question),
+            analysis_confidence=analysis.get("confidence", 0.5),
+            analysis_model=analysis.get("model"),
+            analysis_source=analysis.get("source", "ai"),
         )
         self.db.add(record)
         self._ensure_weak_knowledge(question)
@@ -243,19 +298,58 @@ class MisconceptionService:
     @staticmethod
     def _parse_analysis(text: str) -> dict:
         """Parse AI analysis JSON response."""
+        return MisconceptionService._parse_structured_analysis(text)
+
+    @staticmethod
+    def _parse_structured_analysis(text: str, model: str | None = None) -> dict:
+        """Parse structured AI analysis JSON response."""
         text = text.strip()
         if text.startswith("```"):
             text = re.sub(r"^```\w*\n?", "", text)
             text = re.sub(r"\n?```$", "", text)
         try:
-            return json.loads(text)
+            raw = json.loads(text)
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse misconception analysis: {text[:200]}")
-            return {
-                "misconception_summary": text[:500],
-                "knowledge_gap": "",
-                "remediation": "",
-            }
+            raw = {"error_cause": text[:500]}
+
+        confidence = raw.get("confidence", 0.5)
+        try:
+            confidence = max(0.0, min(1.0, float(confidence)))
+        except (TypeError, ValueError):
+            confidence = 0.5
+
+        error_cause = str(
+            raw.get("error_cause") or raw.get("misconception_summary") or ""
+        ).strip()
+        misconception_summary = str(
+            raw.get("misconception_summary") or raw.get("error_cause") or ""
+        ).strip()
+
+        return {
+            "error_cause": error_cause,
+            "misconception_summary": misconception_summary,
+            "confused_concepts": _as_string_list(raw.get("confused_concepts")),
+            "correct_reasoning_path": str(
+                raw.get("correct_reasoning_path") or ""
+            ).strip(),
+            "knowledge_gap": str(raw.get("knowledge_gap") or "").strip(),
+            "recommended_actions": _as_string_list(raw.get("recommended_actions")),
+            "confidence": confidence,
+            "model": model,
+            "source": "ai",
+        }
+
+    def _create_fallback_after_error(
+        self,
+        question: Question,
+        user_answer: str,
+        correct_answer: str,
+    ) -> Misconception:
+        record = self._create_basic_misconception(question, user_answer, correct_answer)
+        self._ensure_weak_knowledge(question)
+        self.db.commit()
+        return record
 
     def _create_basic_misconception(
         self,
@@ -277,5 +371,13 @@ class MisconceptionService:
             knowledge_gap=question.chapter or "",
             remediation="建议复习该章节相关知识点",
         )
+        record.error_cause = f"选择了{user_answer}，正确答案是{correct_answer}"
+        record.confused_concepts_json = _json_dumps([])
+        record.correct_reasoning_path = question.analysis or ""
+        record.recommended_actions_json = _json_dumps(["复习相关知识点", "重做同类题"])
+        record.related_knowledge_tag = _knowledge_tag_for(question)
+        record.analysis_confidence = 0.3
+        record.analysis_model = None
+        record.analysis_source = "fallback"
         self.db.add(record)
         return record

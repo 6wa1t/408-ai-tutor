@@ -28,11 +28,11 @@ class Settings(BaseSettings):
 
     # --- Application ---
     app_name: str = "408考研AI专属助教"
-    app_version: str = "0.2.1"
+    app_version: str = "0.2.3"
     debug: bool = False
 
     # --- Database ---
-    database_url: str = f"sqlite:///{PROJECT_ROOT / 'data' / 'questions.db'}"
+    database_url: str = f"sqlite:///{PROJECT_ROOT / 'data' / 'app_questions.db'}"
 
     # --- Logging ---
     log_level: str = "INFO"
@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # --- Paths ---
     pdf_dir: str = str(PROJECT_ROOT / "data")
     image_dir: str = str(PROJECT_ROOT / "images")
+    runtime_media_dir: str = str(PROJECT_ROOT / "images" / "question_assets")
+
+    # --- Answer candidates ---
+    answer_confidence_threshold: float = 0.8
 
     # --- LLM (Phase 4) ---
     llm_api_base: str = ""

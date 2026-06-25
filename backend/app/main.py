@@ -16,7 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.core.exceptions import AppBaseException
 from app.core.logging_config import setup_logging, get_logger
-from app.database.session import create_tables
+from app.database.schema_sync import sync_agent_knowledge_schema
+from app.database.session import create_tables, engine
 
 # Import models to register them with SQLAlchemy metadata
 import app.models  # noqa: F401
@@ -30,6 +31,7 @@ from app.api.misconceptions import router as misconceptions_router
 from app.api.wrong_questions import router as wrong_questions_router
 from app.api.conversations import router as conversations_router
 from app.api.weak_knowledge import router as weak_knowledge_router
+from app.api.agent_exports import router as agent_exports_router
 
 
 settings = get_settings()
@@ -45,6 +47,7 @@ async def lifespan(app: FastAPI):
 
     # Always create tables
     create_tables()
+    sync_agent_knowledge_schema(engine)
     logger.info("Database tables ensured")
 
     # Dev-mode migrations
@@ -53,7 +56,6 @@ async def lifespan(app: FastAPI):
         # Check existing columns via PRAGMA first so we (a) skip the no-op ALTER
         # when the column already exists, and (b) do NOT swallow real DB errors
         # behind a bare `except Exception`.
-        from app.database.session import engine
         from sqlalchemy import text
         with engine.connect() as conn:
             existing_cols = {
@@ -108,6 +110,7 @@ app.include_router(misconceptions_router)
 app.include_router(wrong_questions_router)
 app.include_router(conversations_router)
 app.include_router(weak_knowledge_router)
+app.include_router(agent_exports_router)
 
 # --- Static files: serve extracted question images ---
 _images_dir = Path(settings.image_dir)

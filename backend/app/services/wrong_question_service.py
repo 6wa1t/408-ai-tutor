@@ -160,6 +160,21 @@ class WrongQuestionService:
                 if tag:
                     self.weak_repo.update_stats(tag, is_correct)
 
+        misconception_synced = True
+        if correct_answer and not is_correct:
+            try:
+                from app.services.misconception_service import MisconceptionService
+
+                MisconceptionService(self.db).analyze_wrong_answer(
+                    question, user_answer, correct_answer
+                )
+            except Exception as exc:
+                misconception_synced = False
+                logger.warning(
+                    f"Misconception review analysis failed for wrong question #{wrong_id}: {exc}",
+                    exc_info=True,
+                )
+
         self.db.commit()
 
         logger.info(
@@ -175,6 +190,7 @@ class WrongQuestionService:
             "updated": {
                 "last_status": "correct" if is_correct else "wrong",
                 "review_count": wq.review_count,
+                "misconception_synced": misconception_synced,
             },
         }
 

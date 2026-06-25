@@ -1,6 +1,6 @@
 """WeakKnowledge ORM model — tracks knowledge mastery."""
 
-from sqlalchemy import Integer, String, Float
+from sqlalchemy import Integer, String, Float, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -25,6 +25,11 @@ class WeakKnowledge(Base):
     mastery_score: Mapped[float] = mapped_column(
         Float, nullable=False, default=0.0, comment="掌握度评分 (0~1)"
     )
+
+    subject: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chapter: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recommended_actions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     def recalculate_mastery(self) -> None:
         """根据正确/错误次数重新计算掌握度。"""

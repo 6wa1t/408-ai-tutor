@@ -14,8 +14,10 @@ Strategy pattern for future extensibility (VLM fallback in Phase 4).
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -67,8 +69,8 @@ class PDFParserStrategy(Protocol):
 SUBJECT_KEYWORDS: dict[str, list[str]] = {
     "数据结构": ["数据结构", "data structure"],
     "操作系统": ["操作系统", "operating system"],
-    "计算机组成原理": ["组成原理", "计算机组成", "computer organization"],
-    "计算机网络": ["计算机网络", "computer network"],
+    "计算机组成原理": ["组成原理", "计算机组成", "机组", "computer organization"],
+    "计算机网络": ["计算机网络", "计网", "computer network"],
 }
 
 
@@ -521,13 +523,15 @@ class VLMFallbackStrategy:
         self,
         pdf_path: str,
         page_range: tuple[int, int] | None = None,
+        max_workers: int = 3,
     ) -> list[ParsedQuestion]:
-        """Parse a scanned PDF using vision LLM.
+        """Parse a scanned PDF using vision LLM with concurrent page processing.
 
         Args:
             pdf_path: Path to the PDF file.
             page_range: Optional (start, end) 0-indexed page range.
                         If None, processes all pages.
+            max_workers: Max concurrent VLM requests (default 3).
 
         Returns:
             List of ParsedQuestion objects.
@@ -558,111 +562,183 @@ class VLMFallbackStrategy:
             start, end = 0, total_pages
         end = min(end, total_pages)
 
+        # ── Phase 1: Pre-scan pages (fast, skip blanks) ──
         questions: list[ParsedQuestion] = []
-        # Track chapter/section context across pages
-        context: dict[str, str] = {"chapter": "", "section": ""}
+        skipped_pages = 0
+        pages_to_process: list[int] = []
+        for page_idx in range(start, end):
+            if self._pre_scan_skip(doc, page_idx):
+                skipped_pages += 1
+            else:
+                pages_to_process.append(page_idx)
+
+        logger.info(
+            f"VLM pre-scan: {len(pages_to_process)} pages to process, "
+            f"{skipped_pages} blank/trivial pages skipped"
+        )
+
+        # ── Phase 2: Render pages to temp images ──
+        temp_images: dict[int, str] = {}
+        for page_idx in pages_to_process:
+            try:
+                page = doc[page_idx]
+                pix = page.get_pixmap(dpi=200)
+                page_img_path = str(
+                    image_dir / f"{pdf_stem}_page{page_idx + 1}.png"
+                )
+                pix.save(page_img_path)
+                temp_images[page_idx] = page_img_path
+            except Exception as e:
+                logger.error(f"Failed to render page {page_idx + 1}: {e}")
 
         try:
-            for page_idx in range(start, end):
-                try:
-                    # ── 1. 渲染页面为高分辨率图片 ──
-                    pix = None
+            # ── Phase 3: Parallel VLM calls ──
+            vlm_results: dict[int, dict] = {}
+            logger.info(
+                f"VLM processing {len(temp_images)} pages "
+                f"with {max_workers} concurrent workers"
+            )
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_page = {}
+                for page_idx, img_path in temp_images.items():
+                    future = executor.submit(
+                        self.llm.analyze_questions_page, img_path, None
+                    )
+                    future_to_page[future] = page_idx
+
+                for future in as_completed(future_to_page):
+                    page_idx = future_to_page[future]
                     try:
-                        page = doc[page_idx]
-                        pix = page.get_pixmap(dpi=200)
-                        page_img_path = str(
-                            image_dir / f"{pdf_stem}_page{page_idx + 1}.png"
-                        )
-                        pix.save(page_img_path)
+                        result = future.result()
+                        vlm_results[page_idx] = result
                     except Exception as e:
-                        logger.error(
-                            f"Failed to render page {page_idx + 1}: {e}"
-                        )
-                        continue
+                        logger.error(f"VLM error on page {page_idx + 1}: {e}")
 
-                    # ── 2. 发送VLM提取题目 + 配图位置 ──
-                    result = self.llm.analyze_questions_page(
-                        page_img_path, context
-                    )
+            # ── Phase 4: Process results (vector diagram extraction + matching) ──
+            context: dict[str, str] = {"chapter": "", "section": ""}
+            last_q_num: int | None = None  # carry across pages
 
-                    # Update context from VLM response
-                    page_context = result.get("context", {})
-                    if page_context.get("chapter"):
-                        context["chapter"] = page_context["chapter"]
-                    if page_context.get("section"):
-                        context["section"] = page_context["section"]
-
-                    # ── 3. 按VLM返回的位置裁剪配图 ──
-                    # 批处理：先收集所有需要裁剪的图片
-                    img_attachments: dict[int, list[str]] = {}
-                    for q_data in result.get("questions", []):
-                        q_num = q_data.get("number")
-                        if q_num is None:
-                            continue
-                        y_range = q_data.get("image_y_range")
-                        if (
-                            y_range
-                            and isinstance(y_range, (list, tuple))
-                            and len(y_range) >= 2
-                        ):
-                            y1_ratio = max(0.0, min(1.0, float(y_range[0])))
-                            y2_ratio = max(0.0, min(1.0, float(y_range[1])))
-                            # 过滤高度太小的误报
-                            if y2_ratio - y1_ratio > 0.02:
-                                y1 = int(y1_ratio * pix.height)
-                                y2 = int(y2_ratio * pix.height)
-                                x1 = int(0.05 * pix.width)
-                                x2 = int(0.95 * pix.width)
-                                clip_rect = fitz.Rect(x1, y1, x2, y2)
-                                img_pix = fitz.Pixmap(pix, clip_rect)
-
-                                img_filename = (
-                                    f"{pdf_stem}_p{page_idx:03d}"
-                                    f"_q{q_num:03d}_vlm.png"
-                                )
-                                rel_path = str(
-                                    Path("questions") / subject / img_filename
-                                )
-                                abs_path = image_dir / rel_path
-                                abs_path.parent.mkdir(parents=True, exist_ok=True)
-                                img_pix.save(str(abs_path))
-                                img_attachments.setdefault(q_num, []).append(rel_path)
-
-                    # ── 4. 构建ParsedQuestion对象 ──
-                    for q_data in result.get("questions", []):
-                        q = self._build_parsed_question(
-                            q_data, context, page_idx, subject, img_attachments
-                        )
-                        if q and q.question_text.strip():
-                            questions.append(q)
-
-                    # Clean up rendered full-page image
-                    try:
-                        Path(page_img_path).unlink(missing_ok=True)
-                    except OSError:
-                        pass
-
-                    # Progress logging
-                    if (page_idx - start + 1) % 5 == 0 or page_idx == end - 1:
-                        logger.info(
-                            f"VLM progress: page {page_idx + 1}/{end} "
-                            f"({len(questions)} questions so far)"
-                        )
-
-                except Exception as e:
-                    logger.error(
-                        f"VLM error on page {page_idx + 1}: {e}"
-                    )
-                    # Continue with next page
+            for page_idx in pages_to_process:
+                result = vlm_results.get(page_idx)
+                if not result:
                     continue
 
+                # Check page_type from VLM response
+                page_type = result.get("page_type", "question")
+                if page_type != "question":
+                    logger.info(
+                        f"  Page {page_idx + 1}: skipped (type={page_type})"
+                    )
+                    continue
+
+                # Update context from VLM response
+                page_context = result.get("context", {})
+                if page_context.get("chapter"):
+                    context["chapter"] = page_context["chapter"]
+                if page_context.get("section"):
+                    context["section"] = page_context["section"]
+
+                page_questions = result.get("questions", [])
+
+                # ── Extract vector diagrams from this page ──
+                diagrams = self._extract_vector_diagrams(
+                    doc, page_idx, image_dir, subject, pdf_stem
+                )
+
+                # ── Get question positions for spatial matching ──
+                q_positions: list[tuple[int, float]] = []  # (q_num, y_top)
+                try:
+                    page = doc[page_idx]
+                    text_dict = page.get_text("dict")
+                    q_line_re = re.compile(
+                        r"^\s*(\d{1,4})\s*[.、．]\s*\S"
+                    )
+                    for block in text_dict.get("blocks", []):
+                        if block.get("type") != 0:
+                            continue
+                        for line in block.get("lines", []):
+                            line_text = "".join(
+                                span.get("text", "")
+                                for span in line.get("spans", [])
+                            )
+                            m = q_line_re.match(line_text)
+                            if m:
+                                q_positions.append(
+                                    (int(m.group(1)), line["bbox"][1])
+                                )
+                except Exception:
+                    pass
+
+                # ── Match diagrams to questions by spatial proximity ──
+                img_attachments: dict[int, list[str]] = {}
+                for diag in diagrams:
+                    diag_y = diag["y_top"]
+                    # Find nearest question above this diagram
+                    best_q: int | None = None
+                    best_dist = float("inf")
+                    for q_num, q_y in q_positions:
+                        if q_y <= diag_y and (diag_y - q_y) < best_dist:
+                            best_dist = diag_y - q_y
+                            best_q = q_num
+                    # Fallback: use last question from previous page
+                    if best_q is None and last_q_num is not None:
+                        best_q = last_q_num
+                    if best_q is not None:
+                        img_attachments.setdefault(best_q, []).append(
+                            diag["path"]
+                        )
+
+                # Debug: log matching results
+                if diagrams:
+                    logger.info(
+                        f"  Page {page_idx + 1}: q_positions={q_positions}, "
+                        f"diagrams={[(d['y_top'], d['path']) for d in diagrams]}, "
+                        f"img_attachments={dict(img_attachments)}"
+                    )
+
+                # ── Build ParsedQuestion objects ──
+                for q_data in page_questions:
+                    q = self._build_parsed_question(
+                        q_data, context, page_idx, subject, img_attachments
+                    )
+                    if q and q.question_text.strip():
+                        questions.append(q)
+
+                # Track last question number for cross-page diagram matching
+                if page_questions:
+                    last_nums = [
+                        q_data.get("number")
+                        for q_data in page_questions
+                        if q_data.get("number") is not None
+                    ]
+                    if last_nums:
+                        try:
+                            last_q_num = int(last_nums[-1])
+                        except (ValueError, TypeError):
+                            last_q_num = last_nums[-1]
+
+                # Progress logging
+                processed = pages_to_process.index(page_idx) + 1
+                if processed % 5 == 0 or processed == len(pages_to_process):
+                    logger.info(
+                        f"VLM progress: {processed}/{len(pages_to_process)} "
+                        f"pages processed ({len(questions)} questions)"
+                    )
+
         finally:
+            # ── Cleanup ──
+            for img_path in temp_images.values():
+                try:
+                    Path(img_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
             doc.close()
 
         logger.info(
             f"VLM fallback complete: {len(questions)} questions from "
             f"{end - start} pages of {pdf_path_obj.name} "
-            f"(subject={subject})"
+            f"(subject={subject}, {skipped_pages} pages pre-skipped)"
         )
         img_count = sum(1 for q in questions if q.image_paths)
         if img_count:
@@ -670,6 +746,139 @@ class VLMFallbackStrategy:
                 f"VLM cropped diagram images for {img_count} questions"
             )
         return questions
+
+    @staticmethod
+    def _pre_scan_skip(doc, page_idx: int) -> bool:
+        """Quick text scan to skip blank/trivial pages before VLM.
+
+        Returns True if the page should be skipped.
+        """
+        try:
+            page = doc[page_idx]
+            text = page.get_text("text").strip()
+            # Skip pages with very little text (likely blank, TOC, ads)
+            if len(text) < 50:
+                return True
+            # Skip pages that are mostly page numbers / headers
+            lines = [
+                line.strip()
+                for line in text.split("\n")
+                if line.strip()
+            ]
+            if len(lines) <= 2:
+                return True
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _extract_vector_diagrams(
+        doc,
+        page_idx: int,
+        image_dir: Path,
+        subject: str,
+        pdf_stem: str,
+    ) -> list[dict]:
+        """Detect vector graphics on a page, cluster into diagram regions, crop & save.
+
+        Uses PyMuPDF's get_drawings() to find lines/curves/rects that form
+        diagrams (circuit diagrams, data-path figures, tables, etc.).
+
+        Returns:
+            List of dicts: {"y_ratio": float, "path": str, "y_top": float}
+            where y_ratio is the diagram center as a 0-1 ratio of page height,
+            and y_top is the top y-coordinate in page points.
+        """
+        try:
+            page = doc[page_idx]
+            drawings = page.get_drawings()
+        except Exception:
+            return []
+
+        if len(drawings) < 5:
+            return []  # not enough elements for a meaningful diagram
+
+        page_w = page.rect.width
+        page_h = page.rect.height
+
+        # ── Collect bounding rects, filter page-border-sized ones ──
+        rects: list[tuple[float, float, float, float]] = []
+        for d in drawings:
+            r = d.get("rect")
+            if not r:
+                continue
+            x0, y0, x1, y1 = r
+            w = x1 - x0
+            h = y1 - y0
+            # Skip page-border-sized elements (>80% of page)
+            if w > 0.8 * page_w and h > 0.8 * page_h:
+                continue
+            # Skip tiny fragments (< 5pt in both dims)
+            if w < 5 and h < 5:
+                continue
+            rects.append((x0, y0, x1, y1))
+
+        if not rects:
+            return []
+
+        # ── Cluster by vertical proximity (merge if gap < 30pt) ──
+        # Sort by y_top
+        rects.sort(key=lambda r: r[1])
+        clusters: list[list[float]] = []  # [x0, y0, x1, y1]
+        for r in rects:
+            if clusters:
+                prev = clusters[-1]
+                # If this rect's top is within 30pt of the cluster's bottom
+                if r[1] - prev[3] < 30:
+                    prev[0] = min(prev[0], r[0])
+                    prev[1] = min(prev[1], r[1])
+                    prev[2] = max(prev[2], r[2])
+                    prev[3] = max(prev[3], r[3])
+                    continue
+            clusters.append([r[0], r[1], r[2], r[3]])
+
+        # ── Filter: keep only clusters with area > 5% of page ──
+        page_area = page_w * page_h
+        results: list[dict] = []
+        for idx, c in enumerate(clusters):
+            cw = c[2] - c[0]
+            ch = c[3] - c[1]
+            if cw * ch < 0.05 * page_area:
+                continue
+            if ch < 20:  # too short vertically
+                continue
+
+            # Add 10% padding
+            pad = 0.10 * ch
+            clip_y0 = max(0, c[1] - pad)
+            clip_y1 = min(page_h, c[3] + pad)
+            clip_x0 = max(0, c[0] - pad)
+            clip_x1 = min(page_w, c[2] + pad)
+            clip_rect = fitz.Rect(clip_x0, clip_y0, clip_x1, clip_y1)
+
+            img_pix = page.get_pixmap(dpi=200, clip=clip_rect)
+
+            img_filename = (
+                f"{pdf_stem}_p{page_idx:03d}_diag{idx:02d}_vlm.png"
+            )
+            rel_path = str(Path("questions") / subject / img_filename)
+            abs_path = image_dir / rel_path
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            img_pix.save(str(abs_path))
+
+            y_center = (c[1] + c[3]) / 2.0
+            results.append({
+                "y_ratio": y_center / page_h,
+                "path": rel_path,
+                "y_top": c[1],
+            })
+
+        if results:
+            logger.info(
+                f"  Page {page_idx + 1}: extracted {len(results)} "
+                f"vector diagram(s) from {len(drawings)} drawings"
+            )
+        return results
 
     @staticmethod
     def _build_parsed_question(
@@ -695,6 +904,10 @@ class VLMFallbackStrategy:
         text = str(q_data.get("text", "")).strip()
         if not text:
             return None
+
+        # Auto-fix: ensure blank line after closing code fences
+        # Pattern: ```\nSomeText → ```\n\nSomeText
+        text = re.sub(r'(```[ \t]*)\n([^\n\s])', r'\1\n\n\2', text)
 
         q_num = q_data.get("number")
         q = ParsedQuestion(
@@ -737,9 +950,19 @@ class VLMFallbackStrategy:
 
         # Attach cropped diagram images
         if img_attachments and q_num is not None:
-            paths = img_attachments.get(q_num)
+            try:
+                q_num_key = int(q_num)
+            except (ValueError, TypeError):
+                q_num_key = q_num
+            paths = img_attachments.get(q_num_key)
             if paths:
                 q.image_paths = paths
+            else:
+                logger.debug(
+                    f"  No image attachment for q{q_num} (key={q_num_key}, "
+                    f"type={type(q_num_key).__name__}, "
+                    f"available keys={list(img_attachments.keys())})"
+                )
 
         return q
 

@@ -10,6 +10,7 @@ import requests
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider
 from shared.api import get_api_base, get_public_api_base
+from shared.question_rendering import split_question_text
 
 st.set_page_config(page_title="刷题练习", page_icon="✏️", layout="wide")
 apply_theme()
@@ -105,6 +106,80 @@ def _fetch_chapter_questions(subject_param, chapter_name, q_type):
     except requests.ConnectionError:
         st.error("后端服务未连接")
     return []
+
+
+def _render_question_assets(q):
+    rendered = False
+    public_base = get_public_api_base()
+    for asset in q.get("assets") or []:
+        content = asset.get("content_md") or asset.get("text_content")
+        if asset.get("asset_type") in {"table", "text"} and content:
+            st.markdown(content)
+            rendered = True
+            continue
+
+        path = asset.get("path")
+        if path:
+            img_rel = path.replace("\\", "/").strip()
+            if img_rel:
+                try:
+                    encoded_path = urllib.parse.quote(img_rel, safe="/")
+                    img_col, _ = st.columns([5, 3])
+                    with img_col:
+                        st.image(
+                            f"{public_base}/images/{encoded_path}",
+                            use_container_width=True,
+                        )
+                    rendered = True
+                except Exception:
+                    st.caption(f"[图片加载失败: {img_rel}]")
+    return rendered
+
+
+def _render_question_text(text):
+    for part in split_question_text(text):
+        if part.kind == "table_html":
+            st.markdown(part.content, unsafe_allow_html=True)
+        else:
+            st.markdown(part.content)
+
+
+def _answer_source_label(source):
+    labels = {
+        "built_in": "题库内置",
+        "extracted": "来源提取",
+        "deepseek": "DeepSeek 生成",
+        "user_confirmed": "用户确认",
+    }
+    if not source:
+        return "未知来源"
+    return labels.get(str(source).strip(), "未知来源")
+
+
+def _render_answer_provenance(result):
+    if not isinstance(result, dict):
+        return
+    if "answer_source" not in result and "answer_confidence" not in result:
+        return
+
+    parts = [f"答案来源: {_answer_source_label(result.get('answer_source'))}"]
+    raw_confidence = result.get("answer_confidence")
+    if raw_confidence not in (None, ""):
+        try:
+            confidence_text = str(raw_confidence).strip()
+            has_percent = confidence_text.endswith("%")
+            confidence = float(confidence_text.rstrip("%").strip())
+            percent = confidence if has_percent or confidence > 1 else confidence * 100
+            parts.append(f"置信度: {percent:.0f}%")
+        except (TypeError, ValueError):
+            pass
+
+    if result.get("usable_for_grading") is True:
+        parts.append("参与判分")
+    elif result.get("usable_for_grading") is False:
+        parts.append("仅供参考")
+
+    st.caption(" · ".join(parts))
 
 
 # ─── Mode-specific sidebar ───
@@ -237,25 +312,26 @@ else:
             f' · ID: {q.get("id", "")}</span>',
             unsafe_allow_html=True,
         )
-        st.markdown(q.get("question_text", ""))
+        _render_question_text(q.get("question_text", ""))
 
-        # Display question images if available
-        image_path = q.get("image_path")
-        if image_path:
-            public_base = get_public_api_base()
-            for img_rel in image_path.split(","):
-                img_rel = img_rel.strip()
-                if img_rel:
-                    try:
-                        encoded_path = urllib.parse.quote(img_rel, safe="/")
-                        img_col, _ = st.columns([5, 3])
-                        with img_col:
-                            st.image(
-                                f"{public_base}/images/{encoded_path}",
-                                use_container_width=True,
-                            )
-                    except Exception:
-                        st.caption(f"[图片加载失败: {img_rel}]")
+        # Display structured assets first, then legacy images if needed
+        if not _render_question_assets(q):
+            image_path = q.get("image_path")
+            if image_path:
+                public_base = get_public_api_base()
+                for img_rel in image_path.split(","):
+                    img_rel = img_rel.strip()
+                    if img_rel:
+                        try:
+                            encoded_path = urllib.parse.quote(img_rel, safe="/")
+                            img_col, _ = st.columns([5, 3])
+                            with img_col:
+                                st.image(
+                                    f"{public_base}/images/{encoded_path}",
+                                    use_container_width=True,
+                                )
+                        except Exception:
+                            st.caption(f"[图片加载失败: {img_rel}]")
 
         # Display options
         opt_a = q.get("option_a") or ""
@@ -302,6 +378,8 @@ else:
             user_ans = result.get("user_answer", "")
             answer_ref = result.get("answer_ref", "")
             graded = result.get("graded", True)
+
+            _render_answer_provenance(result)
 
             if not graded:
                 # 未判分

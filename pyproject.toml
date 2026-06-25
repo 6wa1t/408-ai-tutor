@@ -1,6 +1,6 @@
 [project]
 name = "408-ai-tutor"
-version = "0.2.1"
+version = "0.2.3"
 description = "408考研AI专属助教 — 智能刷题、错题分析与AI答疑"
 readme = "README.md"
 license = {text = "MIT"}

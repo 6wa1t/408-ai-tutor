@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import String, Text, Integer, DateTime, ForeignKey, Index
+from sqlalchemy import String, Text, Integer, DateTime, ForeignKey, Index, Float
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -48,6 +48,15 @@ class Misconception(Base):
     remediation: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="纠正建议: 如何避免再犯"
     )
+
+    error_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confused_concepts_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correct_reasoning_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recommended_actions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    related_knowledge_tag: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    analysis_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    analysis_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    analysis_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # Tracking
     frequency: Mapped[int] = mapped_column(
