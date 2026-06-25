@@ -7,7 +7,9 @@
   "version": "1.0.0",
   "description": "从本地数据库导出的计算机组成原理题库",
   "has_media": true,
-  "has_partial_answers": false,
+  "has_partial_answers": true,
+  "asset_count": 23,
+  "answer_candidate_count": 10,
   "qc_status": "passed_with_warnings",
-  "exported_at": "2026-06-25T12:46:57.872685"
+  "exported_at": "2026-06-25T13:07:49.591181"
 }
