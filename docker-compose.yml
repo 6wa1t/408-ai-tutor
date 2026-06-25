@@ -9,6 +9,8 @@ services:
       - ./data:/app/data
       - ./images:/app/images
       - ./logs:/app/logs
+      - ./question_banks:/app/question_banks
+      - ./exports:/app/exports
     environment:
       - DEBUG=${DEBUG:-false}
       - PYTHONUTF8=1
@@ -19,7 +21,7 @@ services:
       - VISION_API_KEY=${VISION_API_KEY:-}
       - VISION_API_BASE=${VISION_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - VISION_MODEL=${VISION_MODEL:-qwen-vl-max}
-      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/questions.db}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/app_questions.db}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
