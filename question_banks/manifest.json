@@ -17,13 +17,13 @@
       "id": "操作系统",
       "name": "王道操作系统",
       "subject": "操作系统",
-      "count": 756,
-      "question_count": 756,
+      "count": 752,
+      "question_count": 752,
       "version": "1.0.0",
       "path": "操作系统",
       "description": "从本地数据库导出的操作系统题库",
       "has_media": true,
-      "has_partial_answers": false,
+      "has_partial_answers": true,
       "qc_status": "passed_with_warnings"
     },
     {
@@ -36,7 +36,7 @@
       "path": "计算机组成原理",
       "description": "从本地数据库导出的计算机组成原理题库",
       "has_media": true,
-      "has_partial_answers": false,
+      "has_partial_answers": true,
       "qc_status": "passed_with_warnings"
     },
     {
