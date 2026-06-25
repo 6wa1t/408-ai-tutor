@@ -50,6 +50,30 @@ def _get_stats():
     return None
 
 
+def _get_weak_points(limit=10):
+    try:
+        r = requests.get(
+            f"{api_base}/api/weak-knowledge/weak-points",
+            params={"limit": limit, "min_wrong": 1},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json().get("items", [])
+    except requests.ConnectionError:
+        pass
+    return []
+
+
+def _create_agent_export():
+    try:
+        r = requests.post(f"{api_base}/api/agent-exports", timeout=60)
+        if r.status_code == 200:
+            return True, r.json()
+        return False, r.text
+    except requests.ConnectionError:
+        return False, "无法连接后端"
+
+
 def _get_list(subject, chapter, status, page, page_size=20):
     params = {"page": page, "page_size": page_size}
     if subject and subject != "全部科目":
@@ -134,6 +158,33 @@ def _submit_review(wrong_id, user_answer):
     return None
 
 
+def _render_question_assets(q):
+    rendered = False
+    public_base = get_public_api_base()
+    for asset in q.get("assets") or []:
+        content = asset.get("content_md") or asset.get("text_content")
+        if asset.get("asset_type") in {"table", "text"} and content:
+            st.markdown(content)
+            rendered = True
+            continue
+
+        path = asset.get("path")
+        if path:
+            img_rel = path.replace("\\", "/").strip()
+            if img_rel:
+                try:
+                    img_col, _ = st.columns([5, 3])
+                    with img_col:
+                        st.image(
+                            f"{public_base}/images/{urllib.parse.quote(img_rel, safe='/')}",
+                            use_container_width=True,
+                        )
+                    rendered = True
+                except Exception:
+                    pass
+    return rendered
+
+
 def _manual_add(question_id):
     try:
         r = requests.post(
@@ -207,6 +258,13 @@ with st.sidebar:
         else:
             st.error(f"添加失败: {msg}")
 
+    if st.button("导出 Agent 笔记"):
+        ok, payload = _create_agent_export()
+        if ok:
+            st.success(f"已导出：{payload.get('export_root', '')}")
+        else:
+            st.error(f"导出失败：{payload}")
+
 
 # ── Stats Overview ──
 
@@ -222,6 +280,21 @@ if stats:
 else:
     st.error("无法获取错题统计，请确认后端已启动")
     st.stop()
+
+
+weak_points = _get_weak_points(limit=5)
+if weak_points:
+    with st.expander("AI 薄弱点预览", expanded=False):
+        for item in weak_points:
+            st.markdown(f"**{item.get('knowledge_tag', '')}**")
+            st.caption(
+                f"错 {item.get('wrong_count', 0)} 次 · 掌握度 {item.get('mastery_score', 0):.0%}"
+            )
+            if item.get("ai_summary"):
+                st.markdown(item["ai_summary"])
+            actions = item.get("recommended_actions") or []
+            if actions:
+                st.markdown("复习动作：" + "；".join(actions[:3]))
 
 
 # ── Re-challenge Mode ──
@@ -266,19 +339,20 @@ if st.session_state.wq_review_mode:
     st.markdown(f"**{q.get('subject', '')}** · {q.get('chapter', '')}")
     st.markdown(q.get("question_text", ""))
 
-    # Image
-    img = q.get("image_path")
-    if img:
-        public_base = get_public_api_base()
-        for img_rel in img.split(","):
-            img_rel = img_rel.strip()
-            if img_rel:
-                try:
-                    img_col, _ = st.columns([5, 3])
-                    with img_col:
-                        st.image(f"{public_base}/images/{urllib.parse.quote(img_rel, safe='/')}", use_container_width=True)
-                except Exception:
-                    pass
+    # Structured assets first, then legacy image path if needed
+    if not _render_question_assets(q):
+        img = q.get("image_path")
+        if img:
+            public_base = get_public_api_base()
+            for img_rel in img.split(","):
+                img_rel = img_rel.strip()
+                if img_rel:
+                    try:
+                        img_col, _ = st.columns([5, 3])
+                        with img_col:
+                            st.image(f"{public_base}/images/{urllib.parse.quote(img_rel, safe='/')}", use_container_width=True)
+                    except Exception:
+                        pass
 
     # Options
     opt_map = {}
