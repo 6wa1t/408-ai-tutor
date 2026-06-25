@@ -1,0 +1,13 @@
+{
+  "id": "数据结构",
+  "name": "王道数据结构",
+  "subject": "数据结构",
+  "count": 803,
+  "question_count": 803,
+  "version": "1.0.0",
+  "description": "从本地数据库导出的数据结构题库",
+  "has_media": true,
+  "has_partial_answers": false,
+  "qc_status": "passed_with_warnings",
+  "exported_at": "2026-06-25T12:46:57.706322"
+}
