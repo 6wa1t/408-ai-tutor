@@ -30,6 +30,9 @@ env/
 *.sqlite3
 *.bak_*
 
+# Allow bank packages for sharing
+!question_banks/**/*.db
+
 # Testing
 .pytest_cache/
 .coverage
