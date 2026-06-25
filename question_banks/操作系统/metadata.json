@@ -1,0 +1,13 @@
+{
+  "id": "操作系统",
+  "name": "王道操作系统",
+  "subject": "操作系统",
+  "count": 756,
+  "question_count": 756,
+  "version": "1.0.0",
+  "description": "从本地数据库导出的操作系统题库",
+  "has_media": true,
+  "has_partial_answers": false,
+  "qc_status": "passed_with_warnings",
+  "exported_at": "2026-06-25T12:46:57.794769"
+}
