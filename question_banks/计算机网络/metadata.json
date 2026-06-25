@@ -8,6 +8,8 @@
   "description": "从本地数据库导出的计算机网络题库",
   "has_media": true,
   "has_partial_answers": false,
+  "asset_count": 67,
+  "answer_candidate_count": 0,
   "qc_status": "passed_with_warnings",
-  "exported_at": "2026-06-25T12:46:57.944890"
+  "exported_at": "2026-06-25T13:07:50.058578"
 }
