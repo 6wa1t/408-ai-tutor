@@ -1,0 +1,56 @@
+{
+  "banks": [
+    {
+      "id": "数据结构",
+      "name": "王道数据结构",
+      "subject": "数据结构",
+      "count": 803,
+      "question_count": 803,
+      "version": "1.0.0",
+      "path": "数据结构",
+      "description": "从本地数据库导出的数据结构题库",
+      "has_media": true,
+      "has_partial_answers": false,
+      "qc_status": "passed_with_warnings"
+    },
+    {
+      "id": "操作系统",
+      "name": "王道操作系统",
+      "subject": "操作系统",
+      "count": 756,
+      "question_count": 756,
+      "version": "1.0.0",
+      "path": "操作系统",
+      "description": "从本地数据库导出的操作系统题库",
+      "has_media": true,
+      "has_partial_answers": false,
+      "qc_status": "passed_with_warnings"
+    },
+    {
+      "id": "计算机组成原理",
+      "name": "王道计算机组成原理",
+      "subject": "计算机组成原理",
+      "count": 677,
+      "question_count": 677,
+      "version": "1.0.0",
+      "path": "计算机组成原理",
+      "description": "从本地数据库导出的计算机组成原理题库",
+      "has_media": true,
+      "has_partial_answers": false,
+      "qc_status": "passed_with_warnings"
+    },
+    {
+      "id": "计算机网络",
+      "name": "王道计算机网络",
+      "subject": "计算机网络",
+      "count": 640,
+      "question_count": 640,
+      "version": "1.0.0",
+      "path": "计算机网络",
+      "description": "从本地数据库导出的计算机网络题库",
+      "has_media": true,
+      "has_partial_answers": false,
+      "qc_status": "passed_with_warnings"
+    }
+  ]
+}
