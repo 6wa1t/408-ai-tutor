@@ -445,6 +445,32 @@ class BankService:
                     created_at TEXT NOT NULL
                 )
             """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS question_assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question_text_hash TEXT,
+                    asset_type TEXT NOT NULL,
+                    path TEXT,
+                    source TEXT,
+                    page_number INTEGER,
+                    bbox_json TEXT,
+                    content_md TEXT,
+                    checksum TEXT,
+                    confidence REAL
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS answer_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question_text_hash TEXT,
+                    source TEXT NOT NULL,
+                    answer_text TEXT NOT NULL,
+                    explanation TEXT,
+                    confidence REAL,
+                    is_verified INTEGER DEFAULT 0,
+                    raw_payload TEXT
+                )
+            """))
             conn.commit()
 
         # Insert questions
@@ -485,6 +511,78 @@ class BankService:
                 exported += 1
             conn.commit()
 
+        # Export question assets and copy media files
+        asset_count = 0
+        media_dir = bank_dir / "media" / "images"
+        media_dir.mkdir(parents=True, exist_ok=True)
+
+        with bank_engine.connect() as conn:
+            for q in questions:
+                if not q.text_hash:
+                    continue
+                assets = self.db.query(QuestionAsset).filter(
+                    QuestionAsset.question_id == q.id
+                ).all()
+                for asset in assets:
+                    bank_asset_path = ""
+                    if asset.path:
+                        src_file = PROJECT_ROOT / "images" / asset.path
+                        if src_file.exists() and src_file.is_file():
+                            dest_name = src_file.name
+                            dest_file = media_dir / dest_name
+                            if not dest_file.exists():
+                                shutil.copy2(src_file, dest_file)
+                            bank_asset_path = f"media/images/{dest_name}"
+
+                    conn.execute(text("""
+                        INSERT INTO question_assets
+                        (question_text_hash, asset_type, path, source,
+                         page_number, bbox_json, content_md, checksum, confidence)
+                        VALUES
+                        (:question_text_hash, :asset_type, :path, :source,
+                         :page_number, :bbox_json, :content_md, :checksum, :confidence)
+                    """), {
+                        "question_text_hash": q.text_hash,
+                        "asset_type": asset.asset_type,
+                        "path": bank_asset_path,
+                        "source": asset.source_type,
+                        "page_number": asset.page_no,
+                        "bbox_json": asset.bbox_json,
+                        "content_md": asset.text_content,
+                        "checksum": asset.checksum,
+                        "confidence": asset.confidence,
+                    })
+                    asset_count += 1
+
+            # Export answer candidates (AI-graded answer cache)
+            candidate_count = 0
+            for q in questions:
+                if not q.text_hash:
+                    continue
+                candidates = self.db.query(AnswerCandidate).filter(
+                    AnswerCandidate.question_id == q.id
+                ).all()
+                for cand in candidates:
+                    conn.execute(text("""
+                        INSERT INTO answer_candidates
+                        (question_text_hash, source, answer_text, explanation,
+                         confidence, is_verified, raw_payload)
+                        VALUES
+                        (:question_text_hash, :source, :answer_text, :explanation,
+                         :confidence, :is_verified, :raw_payload)
+                    """), {
+                        "question_text_hash": q.text_hash,
+                        "source": cand.source,
+                        "answer_text": cand.answer_text,
+                        "explanation": cand.explanation,
+                        "confidence": cand.confidence,
+                        "is_verified": 1 if cand.is_verified else 0,
+                        "raw_payload": cand.raw_payload,
+                    })
+                    candidate_count += 1
+
+            conn.commit()
+
         bank_engine.dispose()
 
         # Create metadata.json
@@ -496,8 +594,10 @@ class BankService:
             "question_count": question_count,
             "version": version,
             "description": description or f"从本地数据库导出的{subject}题库",
-            "has_media": has_media,
-            "has_partial_answers": has_partial_answers,
+            "has_media": asset_count > 0,
+            "has_partial_answers": any((q.answer or "").strip() for q in questions),
+            "asset_count": asset_count,
+            "answer_candidate_count": candidate_count,
             "qc_status": qc_status,
             "exported_at": datetime.now().isoformat(),
         }
@@ -516,18 +616,21 @@ class BankService:
             version=version,
             path=safe_name,
             description=metadata["description"],
-            has_media=has_media,
-            has_partial_answers=has_partial_answers,
+            has_media=asset_count > 0,
+            has_partial_answers=any((q.answer or "").strip() for q in questions),
             qc_status=qc_status,
         )
 
         logger.info(
-            f"Exported {exported} questions for '{subject}' to {bank_dir}"
+            f"Exported {exported} questions ({asset_count} assets, "
+            f"{candidate_count} answer candidates) for '{subject}' to {bank_dir}"
         )
 
         return {
             "subject": subject,
             "count": exported,
+            "asset_count": asset_count,
+            "candidate_count": candidate_count,
             "path": str(bank_dir),
             "bank_db_path": str(bank_db_path),
         }
